@@ -6,8 +6,8 @@ snapshots every change first, and restores a snapshot on request.
 
 | Part | Runs on | What it does |
 |---|---|---|
-| `deploy/mgu-install.js` | the owner's computer (Node 18+; Windows, macOS, Linux) | the first install over SSH from the published release, the updater's tokens, USB sticks as local repos |
-| `deploy/install.sh`, `deploy/install.ps1`, `deploy/installer/` | the owner's computer, without Node | run `mgu-install.js` as a standalone executable from the `installer` release |
+| `deploy/mgu-install.js` | the owner's computer (Node 18+; Windows, macOS, Linux) | the first install over SSH from the CN catalog, USB sticks as local repos |
+| `deploy/install.sh`, `deploy/install.ps1` | the owner's computer, Node 18+ | download and verify the CN JavaScript installer |
 | `deploy/hu` | the Mac (system Node) | packs tool artifacts, installs components built from this checkout over SSH (development) |
 | `deploy/sources.json` | | the updater's sources the installers seed: the Store's own, idrive7-apps, idrive-apps and car-apps |
 | `deploy/transport/` | the Mac (system `python3`) | finds the unit's sshd over ENET or the hotspot, relays ENET, and the `--arm-debug` bootstrap |
@@ -154,15 +154,16 @@ guard (iDrive 7, "Bouncing the app manager"): what it changed stays.
 
 The updater reads its sources from `/var/opt/mgu-updater/sources.json`
 (native/mgu-updater/README.md). The installers seed it with
-`deploy/sources.json`, the Store's own source (`mgu-store`, this
-repository's releases), idrive7-apps (`cauliflowermossgrape/idrive7-apps`
-on its default branch), idrive-apps (`robertnisipeanu/idrive-apps`, from
-its releases) and car-apps (`IterioDev/car-apps`, at its newest x.y.z
-tag), when the updater is installed and has none: `sh
+`deploy/sources.json`, the CN HTTPS catalogs with source IDs `mgu-store`
+and `idrive-apps`, when the updater is installed and has none: `sh
 mgu-deploy.sh updater-sources < sources.json` writes it, root's, mode 0600,
 and keeps an existing one, since the owner adds sources from the Store.
 
-The updater's tokens are its own, not a source's (native/mgu-updater/
+The following token operations describe retained upstream deploy compatibility.
+The CN updater does not load or use these credentials; the CN installer and
+Store do not expose token management. Existing files remain for recovery.
+
+The upstream updater's tokens are its own, not a source's (native/mgu-updater/
 README.md, "Tokens"): each one's text in `/var/opt/mgu-updater/credentials/
 token-<id>` and its entry (id, label, account) in `credentials/tokens.json`,
 root's, mode 0600, in a 0700 folder; the updater reads each GitHub source
@@ -174,8 +175,7 @@ updater-token --updater-token-file <file>` stores it alone; both default to
 stored tokens (id, label, account; never a token) and `--remove <id>`
 removes one. Over SSH the file's content travels on ssh's stdin only: it is
 never an argument or part of the staging upload, nor printed.
-`mgu-install.js token` sends one typed at a hidden prompt the same way
-(below). On the unit, `sh mgu-deploy.sh updater-token < <file>` stores a
+On the unit, `sh mgu-deploy.sh updater-token < <file>` stores a
 token, as a new id, unless one with that text is stored already; it writes
 the files only (the running updater notices them within 5 s, asks GitHub
 whose the token is and reads the sources that need it). `--list [--json]`
@@ -225,10 +225,10 @@ Node 18 or newer (its own `fetch`, `crypto` and `zlib`; what it sends is
 packed in Node, no `tar`, shell or Python on the computer), driving the system's
 OpenSSH client (`ssh`, built into Windows 10/11, macOS and Linux). It runs
 from a file or from stdin (`curl -fsSL <raw URL> | node - first-install
-...`); from stdin a token prompt reads the terminal device (`/dev/tty`),
+...`); from stdin restart prompts read the terminal device (`/dev/tty`),
 and where there is none (Windows) the downloaded file is run instead.
 
-`first-install`, `uninstall` and `token` find the head unit by themselves, and print
+`first-install` and `uninstall` find the head unit by themselves, and print
 which connection they used:
 
 1. the car's hotspot, `172.16.222.97:22`, when it serves an SSH banner;
@@ -265,45 +265,45 @@ which the unit's sshd needs.
 `--arm-debug` stays with `deploy/hu`.
 
 ```sh
-node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [--token] [ssh options]
-node mgu-install.js token [--list [--json] | --remove <id>] [ssh options]
+node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [ssh options]
 node mgu-install.js uninstall [--yes] [--from <folder>] [--no-restart-prompt] [ssh options]
 node mgu-install.js status [ssh options]
 node mgu-install.js usb-repo <stick folder> [<input>...]
 ```
 
 ```powershell
-node .\mgu-install.js first-install --identity $HOME\.ssh\mgu_root_key --token
-node .\mgu-install.js token --host 192.168.1.50 --identity $HOME\.ssh\mgu_root_key --list
-node .\mgu-install.js usb-repo E:\ github:robertnisipeanu/mgu-store
+node .\mgu-install.js first-install --identity $HOME\.ssh\mgu_root_key
+node .\mgu-install.js usb-repo E:\
 ```
 
-**Without Node.** The `installer` release of `robertnisipeanu/mgu-store`
-holds `mgu-install.js` built into standalone executables (Node single
-executable applications, Node 24 built in): `mgu-install-<os>-<cpu>.gz` for
-`windows-x64.exe`, `windows-arm64.exe`, `macos-arm64`, `macos-x64`,
-`linux-x64` and `linux-arm64`, and their `SHA256SUMS`.
-`.github/workflows/installer.yml` builds them on each system
-(`deploy/installer/build.sh`), tests them, and replaces the assets when
-`mgu-install.js` changes on main. `deploy/install.sh` (POSIX sh) and
-`deploy/install.ps1` (Windows PowerShell 5.1 and PowerShell 7) pick the
-one for the computer, download it and `SHA256SUMS` to a temporary folder,
-refuse it when its sha256 differs, unpack it, run it with their own
-arguments, delete it, and return its exit status (1 when it could not be
-fetched); `MGU_INSTALL_DOWNLOAD` names another folder of the same files.
-Through `curl | sh` the executable's stdin is the terminal, for the token
-prompt; a token on stdin goes to the executable or `mgu-install.js`
-directly. install.ps1 starts the executable with each argument quoted
-for the Windows C runtime, so spaces, quotes and trailing backslashes
-arrive whole in both PowerShells, and leaves its exit status in
-`$LASTEXITCODE`:
+**CN launcher.** `deploy/install.sh` (POSIX sh) and `deploy/install.ps1`
+(Windows PowerShell 5.1 and PowerShell 7) require Node 18 or newer already
+installed. They download `mgu-install.js` and `SHA256SUMS` from
+`https://mgu.walle.pw/mgu/cn/bootstrap/`, check its SHA-256 before running
+it, and remove the temporary files afterwards. The launchers do not
+download Node. Install the runtime separately before working at the car.
+`MGU_INSTALL_DOWNLOAD` names another bootstrap folder; the default always
+uses the CN domain. These endpoints are usable only once a validated CN
+release has been published.
+
+Maintainers prepare the three scripts and `SHA256SUMS` in an empty output
+folder with `node deploy/installer/bootstrap.js <folder>`. This only writes
+local files. Publication and head-unit update-order validation are separate
+steps.
+
+Through `curl | sh`, Node's stdin is the terminal for interactive prompts.
+PowerShell quotes every argument, including the downloaded script's path,
+and leaves the installer's exit status in `$LASTEXITCODE` (1 for a
+failed download or checksum). GitHub repository imports and token commands are not available in the CN installer.
+GitHub hosts are rejected for catalogs, artifacts and redirects. Existing credentials
+are neither read nor removed.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- usb-repo /Volumes/STICK
+curl -fsSL https://mgu.walle.pw/mgu/cn/bootstrap/install.sh | sh -s -- usb-repo /Volumes/STICK
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) token --identity $HOME\.ssh\mgu_root_key --list
+& ([scriptblock]::Create((irm https://mgu.walle.pw/mgu/cn/bootstrap/install.ps1))) status --identity $HOME\.ssh\mgu_root_key
 ```
 
 **first-install** first reads, without changing anything, whether the
@@ -315,8 +315,8 @@ download, saying to restore the head unit's coding from a backup
 head unit and run the install again. A unit where that cannot be read
 installs as usual.
 
-It reads the `catalog` release of
-`robertnisipeanu/mgu-store` (release/README.md), takes every entry but the
+It reads `https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json`
+(`MGU_INSTALL_CATALOG` can name another HTTPS catalog), takes every entry but the
 optional ones, and of those the renderer `mgu-render` (the Store draws its
 screens with it) and the internet uplink `mgu-uplink` (`--no-renderer`,
 `--no-uplink` leave them out; one the catalog does not list is skipped,
@@ -331,10 +331,9 @@ unit. One ssh call sends them as a tar stream to
 install --artifact ... --skip-older --yes` with the release's deploy tool
 (it installs itself as `mgu-deploy`, keeps newer installed tools and apps,
 does not build an installed Store version again) and `updater-sources`
-with the default sources, mgu-store, idrive7-apps, idrive-apps and car-apps (kept
+with the CN HTTPS sources `mgu-store` and `idrive-apps` (kept
 when the unit has its own); then removes
-the folder. With `--token` a token is added (below), then `status` is
-printed. Its last line
+the folder. `status` is then printed. Its last line
 is `Restart the head unit to finish setup.` while any of
 `mgu-updater.service`, `mgu-render.socket` and `mgu-uplink.service` is
 installed but not active, or, on iDrive 7, while the running app manager
@@ -356,7 +355,7 @@ run in. Exit status: 0 done, 1 failed, 2 refused (the coding, or the deploy tool
 
 **first-install --from <folder>** takes the component list from a folder
 `usb-repo` wrote (`<folder>/mgu-repo/mgu-store`: its `catalog.json` and the
-artifacts beside it) instead of the `catalog` release. Nothing is
+artifacts beside it) instead of the online CN catalog. Nothing is
 downloaded; each artifact is checked against the catalog's size and sha256
 as it is read, before anything is sent, and the rest is the same. The
 folder's `catalog.json` is read before the head unit is searched for; a
@@ -391,11 +390,11 @@ is left goes only after a restart, `… Restart the head unit, then run
 uninstall again to finish.` and the restart question (exit 1).
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- uninstall --identity ~/.ssh/mgu_root_key
+curl -fsSL https://mgu.walle.pw/mgu/cn/bootstrap/install.sh | sh -s -- uninstall --identity ~/.ssh/mgu_root_key
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) uninstall --identity $HOME\.ssh\mgu_root_key
+& ([scriptblock]::Create((irm https://mgu.walle.pw/mgu/cn/bootstrap/install.ps1))) uninstall --identity $HOME\.ssh\mgu_root_key
 ```
 
 **status** prints the deploy tool's report from the head unit: each tool
@@ -408,27 +407,18 @@ a deploy tool it says the Store is not installed (exit 1). Paste the
 output when asking for help:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- status --identity ~/.ssh/mgu_root_key
+curl -fsSL https://mgu.walle.pw/mgu/cn/bootstrap/install.sh | sh -s -- status --identity ~/.ssh/mgu_root_key
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) status --identity $HOME\.ssh\mgu_root_key
+& ([scriptblock]::Create((irm https://mgu.walle.pw/mgu/cn/bootstrap/install.ps1))) status --identity $HOME\.ssh\mgu_root_key
 ```
 
-**token** adds a GitHub token for the updater: read from a hidden prompt
-(not echoed), or from stdin when stdin is not a terminal and the script
-came from a file, never from an
-argument or the environment, never printed. It goes on ssh's stdin to the
-installed deploy tool's `updater-token`; while the updater runs, `updater.js
-check` then has it read its sources again. `--list [--json]` (id, label,
-account; never a token) and `--remove <id>` (an id `--list` names) run
-`updater-token --list [--json]` and `--remove <id>` with nothing on stdin.
-A token added while the updater does not run is used once it runs.
-
-**Downloads** go over https; a token goes to the GitHub API host only and
-never to the host a download redirects to. A repository is read without a
-token first, then with the one given to `--token`, then the GitHub CLI's
-(`gh auth token`), then one typed at a hidden prompt.
+**Downloads** use HTTPS and validate the catalog's size and SHA-256. The CN
+installer rejects GitHub hosts, including redirects, and never reads a GitHub
+CLI token. `status` makes no HTTP request. Use the chosen HTTPS catalog or
+verified local resources; `token`, `--token` and `github:` inputs fail before
+contacting a head unit.
 
 **usb-repo** writes a local repository onto a stick for a car without
 internet. Each input becomes `mgu-repo/<name>/` (names lower-case, safe on
@@ -437,15 +427,12 @@ FAT, exFAT and NTFS), which the updater reads as source
 
 | Input | Folder | Written |
 |---|---|---|
-| `github:<owner>/<repo>` with a `catalog` release | `<repo>` | its catalog.json and every artifact, each checked against the catalog's size and sha256 |
-| `github:<owner>/<repo>` with release assets `<id>@<x.y.z>.tgz` / `.mgu` | `<repo>` | a catalog of the newest of each id (the `.tgz` over the `.mgu`, titles from `mgu-store.json`), each asset checked against its size |
 | `https://.../catalog.json` | `<host>-<folder>` | as a catalog release |
 | a folder with `catalog.json` (a `dir:` publish) | its name | as a catalog release |
 | a folder with `mgu-repo.json` (a checkout) | its name | the repository's files (git's tracked files, else all but `.git` and `node_modules`), which the unit builds |
 | package files `*.tgz`, `*.mgu` | `local` | added to `local/`'s catalog by their content: an app (`package.json` flat, under `package/`, or a `.mgu`), a source package (`mgu-app.json`, `build: "unit"`), a tool kit (`component.json`), a renderer or tether package (`mguService`) as a tool providing its kind; of an id the higher version stays |
 
-No input: `github:robertnisipeanu/mgu-store`. The folder of a `github:` or
-https input holds `mgu-copy.json`, `{"copyOf": "<the input>"}`: the
+No input: the CN mgu-store HTTPS catalog, written to `mgu-repo/mgu-store/`. The folder of an HTTPS input holds `mgu-copy.json`, `{"copyOf": "<the input>"}`: the
 updater then updates from it what that source installed
 (native/mgu-updater/README.md, "Ids"). A written catalog is schema
 2 with the source's fields (`build`, `requires`, `optional`,
@@ -2036,6 +2023,7 @@ stdout, read-only, taking no lock, of this shape:
 ## Tests
 
 ```sh
+node deploy/test/cn_installer.js     # CN transport/bootstrap fixtures on macOS/Linux, no head unit
 node deploy/test/run.js              # MGU_TEST_ONLY=testKit,... runs those test functions only; MGU_TEST_INSTALL_EXE=<file> runs an mgu-install executable in place of the script
 sh deploy/test/run.sh                # in Docker: the unit's code on Node 8.16.2 (MGU_TEST_UNIT_NODE)
 node tools/test/run.js               # the linker and packer; sh tools/test/run.sh: on Node 8.16.2
@@ -2110,10 +2098,9 @@ stopped, its queue moved, its renderer our tool, the record without its
 token, nothing reinstalled; again; Remove and the next start; a failed
 adopt rolled back; our renderer installed first; under recmgr finished at
 the next boot),
-and `mgu-install.js`: `first-install` and `token` against a fake root
+and `mgu-install.js`: `first-install` against a fake root
 through a stand-in `ssh` (`fake_ssh_exec.js`) with the release from a
-stand-in GitHub API (`fake_github.js`: a private repository, downloads
-redirected to another host), run twice (the restart line while the
+public catalog fixture (`fake_github.js`), run twice (the restart line while the
 updater is not running, none once it is), with the uplink, without a
 token, with an artifact that does not match; `usb-repo` from every kind of
 input, the stick then read by the updater's own `sources.js` on the unit's

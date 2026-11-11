@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
+- The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
+- The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+
 ## 0.8.11
 
 - On iDrive 7 units whose Telematics reports iDrive 8 (`hmiVersion` 3), apps get their tile: before the app manager installs an app, its package lists that HMI wherever it lists iDrive 7 and nowhere else, so the app manager installs the iDrive 7 UI, texts and images. Other units get packages as they are.

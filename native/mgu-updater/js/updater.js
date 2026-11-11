@@ -27,6 +27,7 @@ const util = require('util');
 const { URL } = require('url');
 const catalogLib = require('./catalog');
 const sourcesLib = require('./sources');
+const cnSources = require('./cn_sources');
 const { DeviceLogin } = require('./login');
 const { Tokens, TOKEN } = require('./tokens');
 const { runBuild, cleanBuilds } = require('./build');
@@ -824,7 +825,8 @@ class Fetcher {
                 }
             });
             child.stdin.end(JSON.stringify({ url, headers, dest, maxBytes, dns: lease.dns, lease: this.conf.lease || undefined, ca: this.ca,
-                method: job.method || 'GET', body: job.body, keep: job.keep || [], proxy: this.conf.proxy || undefined }));
+                method: job.method || 'GET', body: job.body, keep: job.keep || [], proxy: this.conf.proxy || undefined,
+                denyGithub: cnSources.enabled(this.conf) }));
         }).then((bytes) => {
             this.retire(dir);
             return bytes;
@@ -995,13 +997,13 @@ class Updater {
         if (picked.some((c) => c.role === 'fetch')) {
             this.fetcher.notBefore = Date.now() + UPLINK_RESCAN_MS;
         }
-        this.tokens = new Tokens(conf.credentials_dir || path.join(conf.state_dir, 'credentials'));
+        this.tokens = cnSources.enabled(conf) ? null : new Tokens(conf.credentials_dir || path.join(conf.state_dir, 'credentials'));
         this.ctx = {
             net: this.fetcher,
             // the token picked for a source (checkSource), its text read when used
             tokenFor: (id) => {
                 const rt = this.src.get(id);
-                return rt && rt.tokenId ? this.tokens.text(rt.tokenId) : '';
+                return this.tokens && rt && rt.tokenId ? this.tokens.text(rt.tokenId) : '';
             },
             version: this.version,
             githubApi: conf.github_api || 'https://api.github.com',
@@ -1055,7 +1057,7 @@ class Updater {
         this.storeSecretUid = null;
         this.webUrl = null;
         this.webEnabled = false;
-        this.login = new DeviceLogin({
+        this.login = cnSources.enabled(conf) ? null : new DeviceLogin({
             net: this.fetcher,
             clientId: conf.github_client_id || '',
             web: conf.github_web || 'https://github.com',
@@ -1121,7 +1123,7 @@ class Updater {
             this.loadSources();
             this.addDefaultSources();
             // the per-source tokens of an earlier version, as tokens
-            const was = this.tokens.convert(this.stored, (l) => console.log(l));
+            const was = this.tokens ? this.tokens.convert(this.stored, (l) => console.log(l)) : {};
             Object.keys(was).forEach((id) => {
                 const rt = this.src.get(id);
                 if (rt && !rt.tokenId) {
@@ -1132,13 +1134,15 @@ class Updater {
     }
 
     builtin() {
+        if (cnSources.enabled(this.conf)) {
+            return cnSources.definition(cnSources.GROUPS[0]);
+        }
         return { id: SELF_SOURCE_ID, type: 'github', repo: this.conf.builtin_repo || 'robertnisipeanu/mgu-store', builtin: true };
     }
 
-    /* sources.json (seeded by the installers, then written by the updater);
-     * without it, the built-in source alone. The built-in source is always
-     * there. A file that cannot be read leaves the built-in source alone and
-     * says why. */
+    /* CN startup normalizes known sources in memory and refuses ambiguous
+     * identities. Other channels retain the built-in source on a missing or
+     * unreadable source file. */
     loadSources() {
         let list;
         try {
@@ -1148,7 +1152,18 @@ class Updater {
             this.sourcesError = e.message;
             list = [];
         }
-        if (!list.some((s) => s.builtin)) {
+        if (cnSources.enabled(this.conf) && !this.sourcesError) {
+            try {
+                this.cnExcludedSources = list.filter((s) => !cnSources.groupOf(s) &&
+                    (s.type === 'github' || (s.type === 'https' && cnSources.isGithubUrl(s.url))));
+                list = cnSources.normalize(list, this.origins, this.aliases);
+            } catch (e) {
+                this.sourcesError = e.message;
+                console.log(`sources: ${e.message}`);
+                list = [];
+            }
+        }
+        if (!list.some((s) => s.builtin) && (!cnSources.enabled(this.conf) || !this.sourcesError)) {
             list.unshift(this.builtin());
         }
         this.stored = list;
@@ -1157,7 +1172,7 @@ class Updater {
 
     /* A source id from want (a repo's name) when it is free, else s-<random>. */
     freeSourceId(want) {
-        const taken = (id) => this.stored.some((s) => s.id === id);
+        const taken = (id) => this.stored.concat(this.cnExcludedSources || []).some((s) => s.id === id);
         return want && ID.test(want) && !taken(want) ? want : `s-${crypto.randomBytes(2).toString('hex')}`;
     }
 
@@ -1166,6 +1181,9 @@ class Updater {
      * unless a source of that repo is there. state/default-sources.json
      * records each one, so one the owner removes stays removed. */
     addDefaultSources() {
+        if (cnSources.enabled(this.conf)) {
+            return;
+        }
         const want = String(this.conf.default_sources || '').split(/\s+/).filter(Boolean);
         if (!want.length || this.sourcesError) {
             return;
@@ -1221,7 +1239,7 @@ class Updater {
     }
 
     cacheFile(id) {
-        return path.join(this.conf.state_dir, 'sources', `${id}.json`);
+        return path.join(this.conf.state_dir, cnSources.enabled(this.conf) ? 'sources-walle-cn' : 'sources', `${id}.json`);
     }
 
     /* A source's runtime state, with the components it listed when last read,
@@ -1236,8 +1254,14 @@ class Updater {
         if (def.type !== 'usb') {
             try {
                 const c = readJson(this.cacheFile(def.id));
-                Object.assign(rt, { mode: c.mode, channel: c.channel || rt.channel, commit: c.commit, components: c.components, checkedAt: c.checkedAt,
-                    tokenId: c.token || null, public: c.public === true });
+                if (cnSources.enabled(this.conf)) {
+                    if (c.sourceKey !== cnSources.cacheKey(def)) {
+                        throw new Error('source definition does not match the cached catalog');
+                    }
+                    cnSources.validateCatalog(def, c);
+                }
+                Object.assign(rt, { mode: c.mode, distribution: c.distribution || null, channel: c.channel || rt.channel, commit: c.commit, components: c.components, checkedAt: c.checkedAt,
+                    tokenId: cnSources.enabled(this.conf) ? null : c.token || null, public: c.public === true });
                 if (c.memo && typeof c.memo.key === 'string' && c.memo.version === this.version) {
                     rt.memo = { key: c.memo.key, cat: { mode: c.mode, commit: c.commit, components: c.components, skipped: c.memo.skipped || [], memoKey: c.memo.key } };
                 }
@@ -1265,7 +1289,10 @@ class Updater {
     originOf(id) {
         const rt = this.src.get(id);
         const copy = rt && rt.def.type === 'usb' && rt.copyOf ? rt.copyOf.toLowerCase() : null;
-        const def = copy && this.stored.find((d) => (d.type === 'github' ? `github:${d.repo}` : d.url || '').toLowerCase() === copy);
+        const cnGroup = copy && cnSources.enabled(this.conf) && cnSources.groupOf(copy.startsWith('github:') ?
+            { type: 'github', repo: copy.slice(7) } : { type: 'https', url: copy });
+        const def = copy && this.stored.find((d) => (d.type === 'github' ? `github:${d.repo}` : d.url || '').toLowerCase() === copy ||
+            (cnGroup && cnSources.groupOf(d) === cnGroup));
         const folder = !copy && /^usb:[^/]*\/mgu-repo\/([^/]+)$/.exec(id);
         return def ? def.id : folder && this.stored.some((d) => d.id === folder[1]) ? folder[1] : id;
     }
@@ -1535,7 +1562,7 @@ class Updater {
 
     sourceState(def) {
         const rt = this.src.get(def.id);
-        const token = rt.tokenId && rt.status !== 'auth-needed' ? this.tokens.get(rt.tokenId) : null;
+        const token = !cnSources.enabled(this.conf) && rt.tokenId && rt.status !== 'auth-needed' ? this.tokens.get(rt.tokenId) : null;
         return {
             id: def.id,
             type: def.type,
@@ -1609,12 +1636,15 @@ class Updater {
             });
         });
         const sources = this.defs().map((d) => this.sourceState(d));
-        const tokens = this.tokens.all().map((t) => ({ id: t.id, kind: t.kind, label: t.label || null, login: t.login || null,
+        const github = !cnSources.enabled(this.conf);
+        const tokens = (github ? this.tokens.all() : []).map((t) => ({ id: t.id, kind: t.kind, label: t.label || null, login: t.login || null,
             addedAt: t.addedAt || null, rejected: t.rejected === true,
             usedBy: sources.filter((x) => x.auth && x.auth.token === t.id).map((x) => x.id) }));
         const st = {
             type: 'state',
             updater: { version: this.version },
+            github,
+            distribution: github ? null : cnSources.CHANNEL,
             unit: this.unit,
             // the installed tools providing each capability
             allProviders: this.providers,
@@ -1638,10 +1668,10 @@ class Updater {
             sources,
             tokens,
             // GitHub sign-in is offered only with a GitHub App client id configured
-            signin: !!this.conf.github_client_id,
+            signin: github && !!this.conf.github_client_id,
             // the App's install page, for a repo its sign-in does not reach yet
-            signinApp: appInstall(this.conf.github_app_url),
-            login: this.login.state(),
+            signinApp: github ? appInstall(this.conf.github_app_url) : null,
+            login: github ? this.login.state() : null,
             busy: this.busy,
             rebooting: this.rebooting,
             rebootError: this.rebootError,
@@ -1677,6 +1707,9 @@ class Updater {
     /* Tokens that have run out get new ones from their refresh tokens; one
      * renewal at a time serves every source read meanwhile. */
     freshTokens() {
+        if (cnSources.enabled(this.conf)) {
+            return Promise.resolve();
+        }
         if (!this.renewing) {
             const due = this.tokens.all().filter((t) => t.expiresAt && t.expiresAt <= Date.now() + 60000 && t.refreshToken);
             this.renewing = due.reduce((p, t) => p.then(() => this.login.refresh(t)).then((r) => {
@@ -1697,6 +1730,9 @@ class Updater {
      * address without one 60). Tokens GitHub rejects come before no token,
      * or after it for a repo known to be public. */
     candidates(rt) {
+        if (cnSources.enabled(this.conf)) {
+            return [null];
+        }
         const ids = this.tokens.all().map((t) => t.id);
         const order = (ids.indexOf(rt.tokenId) >= 0 ? [rt.tokenId] : []).concat(ids.filter((id) => id !== rt.tokenId));
         const good = order.filter((id) => !this.tokens.get(id).rejected);
@@ -1710,6 +1746,9 @@ class Updater {
      * listing, or the error, carries apiRequests: the GitHub API requests
      * the read made. */
     readSource(rt) {
+        if (cnSources.enabled(this.conf) && rt.def.type === 'github') {
+            return Promise.reject(new Error('GitHub sources are disabled in the CN distribution'));
+        }
         if (rt.def.type !== 'github') {
             return rt.reader.catalog();
         }
@@ -1757,17 +1796,20 @@ class Updater {
         }
         rt.status = 'checking';
         this.changed();
-        rt.checking = this.freshTokens()
+        const tokens = cnSources.enabled(this.conf) ?
+            Promise.resolve() : this.freshTokens();
+        rt.checking = tokens
             .then(() => this.readSource(rt))
+            .then((cat) => cnSources.enabled(this.conf) ? cnSources.validateCatalog(rt.def, cat) : cat)
             .then((cat) => {
-                Object.assign(rt, { components: cat.components, mode: cat.mode, channel: cat.channel || rt.channel, commit: cat.commit || null,
+                Object.assign(rt, { components: cat.components, mode: cat.mode, distribution: cat.distribution || null, channel: cat.channel || rt.channel, commit: cat.commit || null,
                     copyOf: typeof cat.copyOf === 'string' ? cat.copyOf : null,
                     memo: cat.memoKey ? { key: cat.memoKey, cat: JSON.parse(JSON.stringify(cat)) } : null,
                     status: 'ok', error: cat.skipped && cat.skipped.length ? `left out: ${cat.skipped.join('; ')}` : null,
                     checkedAt: Date.now(), answered: true });
                 if (rt.def.type !== 'usb') {
                     mkdirp(path.dirname(this.cacheFile(id)), 0o700);
-                    writeAtomic(this.cacheFile(id), JSON.stringify({ mode: rt.mode, channel: rt.channel, commit: rt.commit,
+                    writeAtomic(this.cacheFile(id), JSON.stringify({ sourceKey: cnSources.cacheKey(rt.def), mode: rt.mode, distribution: rt.distribution, channel: rt.channel, commit: rt.commit,
                         components: rt.components, checkedAt: rt.checkedAt, token: rt.tokenId, public: rt.public,
                         memo: rt.memo && { key: rt.memo.key, skipped: cat.skipped || [], version: this.version } }));
                 }
@@ -1789,7 +1831,7 @@ class Updater {
             .then(() => {
                 rt.checking = null;
                 this.changed();
-                if (rt.tokensChanged) {
+                if (rt.tokensChanged && !cnSources.enabled(this.conf)) {
                     rt.tokensChanged = false;
                     if (rt.status === 'auth-needed' || (rt.tokenId && !this.tokens.get(rt.tokenId))) {
                         rt.tokenId = this.tokens.get(rt.tokenId) ? rt.tokenId : null;
@@ -2038,7 +2080,9 @@ class Updater {
         const uids = this.checkUids();
         this.scanUsb();
         this.scanTokens();
-        this.validateTokens();
+        if (cnSources.needsGithub(this.conf, this.stored)) {
+            this.validateTokens();
+        }
         this.checking = uids.then(() => Promise.all(this.defs().map((d) => this.checkSource(d.id))))
             .then(() => {
                 // with every source read, which row is the installed one is settled: once the
@@ -3621,12 +3665,18 @@ class Updater {
         if (this.sourcesError) {
             throw new Error(`sources.json cannot be read (${this.sourcesError}); it is left as it is`);
         }
-        sourcesLib.save(this.conf.sources, list);
+        sourcesLib.save(this.conf.sources, list.concat(cnSources.enabled(this.conf) ? this.cnExcludedSources || [] : []));
         this.stored = list;
     }
 
     /* want: the id to give it when that is free (else a random one). */
     sourceAdd(req, want) {
+        if (cnSources.enabled(this.conf) && (req.type === 'github' || cnSources.isGithubUrl(req.url))) {
+            return 'GitHub sources are disabled in the CN distribution';
+        }
+        if (cnSources.enabled(this.conf) && cnSources.groupOf(req)) {
+            return 'this repository is already managed by the CN distribution';
+        }
         let def;
         if (req.type === 'github') {
             if (!sourcesLib.REPO.test(req.repo || '')) {
@@ -3667,6 +3717,9 @@ class Updater {
      * defaultBranch, branches, more), auth-needed (no token reaches it, or it
      * is not there), offline, rate-limited or error (and error). */
     sourceProbe(req, reply) {
+        if (cnSources.enabled(this.conf)) {
+            return 'GitHub sources are disabled in the CN distribution';
+        }
         if (!sourcesLib.REPO.test(req.repo || '')) {
             return 'repo must be <owner>/<repo>';
         }
@@ -3702,6 +3755,9 @@ class Updater {
         if (def.builtin) {
             return 'the Store\'s own source cannot be removed';
         }
+        if (cnSources.enabled(this.conf) && cnSources.groupOf(def)) {
+            return 'the CN distribution manages this source';
+        }
         this.saveSources(this.stored.filter((s) => s.id !== id));
         this.src.delete(id);
         rmIfThere(this.cacheFile(id));
@@ -3722,7 +3778,7 @@ class Updater {
      * expired ones are renewed; quietly nothing without an answer. only:
      * those ids alone. */
     validateTokens(only) {
-        if (!readLease(this.conf).online) {
+        if (cnSources.enabled(this.conf) || !readLease(this.conf).online) {
             return Promise.resolve();
         }
         return this.freshTokens().then(() => Promise.all(this.tokens.all().filter((t) => !only || only.indexOf(t.id) >= 0).map((t) => this.login.account(this.tokens.text(t.id)).then((a) => {
@@ -3743,17 +3799,25 @@ class Updater {
      * too); on a change, checks what is new and reads the GitHub sources
      * that need a token or lost theirs. */
     scanTokens() {
+        if (cnSources.enabled(this.conf)) {
+            return false;
+        }
         if (!this.tokens.scan()) {
             return false;
         }
         this.tokensChanged();
-        this.validateTokens(this.tokens.all().filter((t) => !t.checkedAt).map((t) => t.id));
+        if (cnSources.needsGithub(this.conf, this.stored)) {
+            this.validateTokens(this.tokens.all().filter((t) => !t.checkedAt).map((t) => t.id));
+        }
         return true;
     }
 
     /* A source being read meanwhile tried the tokens as they were: it is
      * read again once done, if it then needs one or lost its own. */
     tokensChanged() {
+        if (cnSources.enabled(this.conf)) {
+            return;
+        }
         this.stored.filter((d) => d.type === 'github').forEach((d) => {
             const rt = this.src.get(d.id);
             if (rt.checking) {
@@ -3775,6 +3839,9 @@ class Updater {
      * rejects is refused; without an answer it is stored and checked on the
      * next check), then reads the sources that need a token. */
     tokenAdd(req, reply) {
+        if (cnSources.enabled(this.conf)) {
+            return 'GitHub accounts are disabled in the CN distribution';
+        }
         const text = typeof req.token === 'string' ? req.token.trim() : '';
         if (!TOKEN.test(text)) {
             return 'a token is 1 to 1024 printable characters without spaces';
@@ -3807,6 +3874,9 @@ class Updater {
     }
 
     tokenRemove(id) {
+        if (cnSources.enabled(this.conf)) {
+            return 'GitHub accounts are disabled in the CN distribution';
+        }
         this.scanTokens();
         if (typeof id !== 'string' || !this.tokens.get(id)) {
             return `no token ${id}`;
@@ -3820,6 +3890,9 @@ class Updater {
     /* A device sign-in's token: it replaces the earlier sign-in's token of
      * the same account, else it is a new one. */
     signedIn(token, meta) {
+        if (cnSources.enabled(this.conf)) {
+            return;
+        }
         const fields = Object.assign({}, meta, { label: meta.login, device: true, rejected: false, checkedAt: Date.now() });
         const earlier = meta.login && this.tokens.all().find((t) => t.device && t.login === meta.login);
         if (earlier && this.tokens.text(earlier.id) !== token) {
@@ -3971,6 +4044,10 @@ class Updater {
     /* One request; returns the reason it is refused, null when the state
      * answers it, or undefined when it answers later through reply(msg). */
     handle(req, reply) {
+        if (cnSources.enabled(this.conf) &&
+            ['login-start', 'login-cancel', 'token-add', 'token-remove', 'source-probe'].indexOf(req.op) >= 0) {
+            return 'GitHub features are disabled in the CN distribution';
+        }
         if (PRIVILEGED.indexOf(req.op) >= 0 && !this.authorized(req.secret) && !(req.op === 'reboot' && this.storeRebootsWithoutSecret())) {
             return 'forbidden';
         }
@@ -4127,6 +4204,10 @@ class Updater {
         return !net.length || net.some((rt) => rt.answered);
     }
 
+    checkTrialCatalog() {
+        return cnSources.enabled(this.conf) ? this.checkSource(SELF_SOURCE_ID) : this.check();
+    }
+
     /* A version on trial is kept once it has done its job end to end: a
      * source read through the uplink (a listing, or an HTTP answer from its
      * server: its network path works), and a deploy tool that answers.
@@ -4141,13 +4222,14 @@ class Updater {
         const local = path.join(this.conf.tool_root, SELF, 'trial-local');
         const needsCatalog = !fs.existsSync(local);
         const deadline = Date.now() + TRIAL_WAIT_MS;
-        const fetched = () => !needsCatalog || (readLease(this.conf).online && this.reached());
+        const fetched = () => !this.sourcesError && (!needsCatalog || (readLease(this.conf).online &&
+            (cnSources.enabled(this.conf) ? cnSources.trialReady(this.src.get(SELF_SOURCE_ID), this.version) : this.reached())));
         // a local one: the sticks are read before the queue it takes up, which may install from them
         const sticks = () => {
             this.scanUsb();
             return Promise.all(this.usb.map((u) => this.checkSource(u.id)));
         };
-        const attempt = () => (!needsCatalog ? sticks() : (readLease(this.conf).online ? this.check() : Promise.resolve())
+        const attempt = () => (!needsCatalog ? sticks() : (readLease(this.conf).online ? this.checkTrialCatalog() : Promise.resolve())
             .then(() => fetched() || Date.now() >= deadline ? undefined
                 : new Promise((r) => setTimeout(r, 3000)).then(attempt)));
         this.busy = { id: SELF, phase: 'check' };
@@ -4159,7 +4241,9 @@ class Updater {
                     fs.unlinkSync(trial);
                     rmIfThere(local);
                     console.log(`running ${this.version}: update committed`);
-                    this.tokens.removeLegacy((l) => console.log(l));
+                    if (this.tokens) {
+                        this.tokens.removeLegacy((l) => console.log(l));
+                    }
                     this.busy = null;
                     this.takeQueue();
                     this.next();
@@ -4202,7 +4286,9 @@ class Updater {
                 rmIfThere(path.join(this.conf.state_dir, 'queue.json'));
                 console.log(`running ${this.version}`);
                 // a version on trial keeps them for the one it may go back to
-                this.tokens.removeLegacy((l) => console.log(l));
+                if (this.tokens) {
+                    this.tokens.removeLegacy((l) => console.log(l));
+                }
             }
             // written by the supervisor when a new version did not come up
             const rolledBack = path.join(this.conf.tool_root, SELF, 'rolled-back');

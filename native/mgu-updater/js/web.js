@@ -735,6 +735,7 @@ function confirmRemoveToken(t) {
 }
 
 var last = {};
+var githubEnabled = true;
 function changed(key, value) {
   var s = JSON.stringify(value);
   if (last[key] === s) { return false; }
@@ -834,18 +835,30 @@ function render(st) {
     var bar = $('busyBar');
     if (b.total) { bar.max = b.total; bar.value = b.progress || 0; } else { bar.removeAttribute('value'); }
   }
-  $('loginStart').hidden = !st.signin;
+  githubEnabled = st.github !== false;
+  $('githubAccounts').hidden = !githubEnabled;
+  $('githubSource').hidden = !githubEnabled;
+  $('githubSource').disabled = !githubEnabled;
+  if (!githubEnabled && $('addType').value === 'github') {
+    $('addType').value = 'https';
+    $('addValue').value = '';
+    addFields();
+  }
+  $('addType').hidden = !githubEnabled;
+  $('loginStart').hidden = !githubEnabled || !st.signin;
   if (changed('sources', st.sources || [])) { renderSources(st.sources || []); }
-  if (changed('tokens', [st.tokens || [], st.sources || []])) { renderTokens(st.tokens || [], st.sources || []); }
+  if (changed('tokens', [githubEnabled, st.tokens || [], st.sources || []])) {
+    renderTokens(githubEnabled ? st.tokens || [] : [], st.sources || []);
+  }
   // a token added for a repository no token reached: look again
   var toks = (st.tokens || []).map(function (t) { return t.id; }).join(',');
   if (toks !== probe.tokens) {
     var again = probe.status === 'auth-needed';
     probe.tokens = toks;
-    if (again) { probeRepo(true); }
+    if (again && githubEnabled) { probeRepo(true); }
   }
   if (changed('components', st.components || [])) { renderComponents(st.components || []); }
-  renderLogin(st.login);
+  renderLogin(githubEnabled ? st.login : null);
   var px = st.proxy;
   $('proxyBox').hidden = !px;
   if (px) {
@@ -895,7 +908,7 @@ function addNote(text) {
   $('addNote').hidden = !text;
 }
 function typedRepo() {
-  return $('addType').value === 'github' ? ghRepo($('addValue').value.trim()) : null;
+  return githubEnabled && $('addType').value === 'github' ? ghRepo($('addValue').value.trim()) : null;
 }
 function keyOf(g) { return g ? g.repo + '#' + g.branch : null; }
 /* The typed repository asked about (on leaving the box, or the first Add); Add waits for the answer. */
@@ -951,6 +964,7 @@ $('addForm').onsubmit = function (ev) {
   ev.preventDefault();
   var v = $('addValue').value.trim();
   if (!v) { return; }
+  if (!githubEnabled && $('addType').value === 'github') { return; }
   var body = { op: 'source-add', type: 'https', url: v };
   if ($('addType').value === 'github') {
     var g = ghRepo(v);
@@ -972,6 +986,7 @@ $('addForm').onsubmit = function (ev) {
 };
 $('tokenForm').onsubmit = function (ev) {
   ev.preventDefault();
+  if (!githubEnabled) { return; }
   var v = $('tokenValue').value.trim();
   if (!v) { return; }
   op({ op: 'token-add', token: v }).then(function () { $('tokenValue').value = ''; });
@@ -983,8 +998,8 @@ $('proxyForm').onsubmit = function (ev) {
   op({ op: 'proxy-set', url: v }).then(function () { $('proxyValue').value = ''; });
 };
 $('proxyOff').onclick = function () { op({ op: 'proxy-set', url: '' }); };
-$('loginStart').onclick = function () { op({ op: 'login-start' }); };
-$('loginCancel').onclick = function () { op({ op: 'login-cancel' }); };
+$('loginStart').onclick = function () { if (githubEnabled) { op({ op: 'login-start' }); } };
+$('loginCancel').onclick = function () { if (githubEnabled) { op({ op: 'login-cancel' }); } };
 $('logForm').onsubmit = function (ev) {
   ev.preventDefault();
   var pre = $('log');
@@ -1048,11 +1063,13 @@ a{color:var(--acc)}
 </div>
 <h2>Sources</h2>
 <div id="sources"></div>
-<form id="addForm"><select id="addType" aria-label="Type"><option value="github">GitHub</option><option value="https">URL</option></select><input id="addValue" aria-label="Source" placeholder="owner/repo" autocapitalize="off" autocorrect="off" spellcheck="false"><select id="addChannel" aria-label="Channel" hidden></select><button id="addSubmit" class="pri">Add</button></form>
+<form id="addForm"><select id="addType" aria-label="Type"><option id="githubSource" value="github">GitHub</option><option value="https">URL</option></select><input id="addValue" aria-label="Source" placeholder="owner/repo" autocapitalize="off" autocorrect="off" spellcheck="false"><select id="addChannel" aria-label="Channel" hidden></select><button id="addSubmit" class="pri">Add</button></form>
 <p id="addNote" class="mut" hidden></p>
+<div id="githubAccounts">
 <h2>Tokens</h2>
 <div id="tokens"></div>
 <form id="tokenForm"><input id="tokenValue" type="password" aria-label="Token" placeholder="Token" autocomplete="off"><button class="pri">Add token</button><button id="loginStart" type="button" hidden>Sign in with GitHub</button></form>
+</div>
 <div id="proxyBox" hidden>
 <h2>Proxy</h2>
 <div id="proxyState" class="mut"></div>

@@ -242,6 +242,9 @@ const TEXT_ROWS = ROWS.slice(0, 3).concat([
     [['Shift', 1.3, 'mod'], 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.'],
     [['-', 0.8], ["'", 0.8], ['Space', 5.2, 'mod'], ['?', 0.8], ['!', 0.8], ['Next', 1.7, 'go']],
 ]);
+const HTTPS_ROWS = ROWS.slice(0, 4).concat([
+    [['https://', 1.6, 'mod'], ['/catalog.json', 2.1, 'mod'], ['.com', 1.2, 'mod'], ['-', 0.8], ['_', 0.8], [':', 0.8], ['Next', 1.7, 'go']]
+]);
 // o.symbols (word keyboard only): a '#+=' key opens the symbols page (o.sym), 'abc' goes back - all the printable ASCII
 // symbols (a Wi-Fi password may hold any), the digits stay on top
 const SYM_KEY = '#+=', ABC_KEY = 'abc';
@@ -253,7 +256,8 @@ const SYM_ROWS = [ROWS[0],
     [[ABC_KEY, 1.3, 'mod'], ['`', 0.8], ['|', 0.8], ['Space', 4.7, 'mod'], ['~', 0.8], ['Next', 1.7, 'go']]];
 /** Every key's box: { text, kind, x, y, w, h } (design px). o.layout 'text': the word keyboard (+ o.symbols, o.sym). */
 function keyBoxes(b, o) {
-    const rows = o && o.layout === 'text' ? (o.symbols ? (o.sym ? SYM_ROWS : TEXT_SYM_ROWS) : TEXT_ROWS) : ROWS;
+    const rows = o && o.layout === 'text' ? (o.symbols ? (o.sym ? SYM_ROWS : TEXT_SYM_ROWS) : TEXT_ROWS) :
+        o && o.layout === 'https' ? HTTPS_ROWS : ROWS;
     const gap = 16, rh = (b.h - gap * (rows.length - 1)) / rows.length, out = [];
     rows.forEach((r, ri) => {
         const ks = r.map((k) => (Array.isArray(k) ? k : [k, 1])), tw = ks.reduce((a, k) => a + k[1], 0), unit = (b.w - gap * (ks.length - 1)) / tw;

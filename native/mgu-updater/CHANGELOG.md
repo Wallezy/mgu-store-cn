@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The CN distribution reads its Store and map catalogs over HTTPS while preserving installed source identities. Known official and mirror definitions are normalized in memory; conflicting identities stop source changes instead of guessing.
+- CN catalogs use isolated, definition-bound caches, and an online updater trial requires its own complete CN catalog rather than an unrelated source response.
+- CN runtime disables GitHub sources and accounts without deleting their saved recovery data, and refuses GitHub download hosts through redirects as well.
+
 ## 0.8.39
 
 - The deploy tool's own update goes first among queued requests, so Update all installs every other component through the new deploy tool.

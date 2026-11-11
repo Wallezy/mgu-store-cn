@@ -19,6 +19,23 @@ node release/release.js publish --stamped [--dry-run]  # (the Release workflow) 
 
 Contributors: [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
+## CN publication
+
+This fork publishes only to `Wallezy/mgu-store-cn`. The manual workflow defaults
+to a dry run. A live publish requires an already stamped, committed version and
+a successful `release-check/cn-integration` on that exact HEAD; existing component
+checks also apply. Unit-test CI cannot establish that status. Live publication
+never stamps or pushes an untested release commit. See
+[CN distribution validation](../docs/CN-DISTRIBUTION.md).
+
+The reserved runtime catalog is
+`https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json`. Publishing GitHub assets does
+not populate OSS. The dedicated CN snapshot must include the corresponding apps
+catalog and all verified dependencies before users can select this channel.
+The `CN installer checks` workflow only tests and retains bootstrap artifacts;
+it never overwrites a live bootstrap on push.
+
+
 ## Components
 
 | Kind | Where | Version | Artifact |
@@ -101,7 +118,7 @@ folder name. The Release workflow's `stamp`:
   leaves an empty `## Unreleased` above;
 - writes the version of each `"requires": {"<id>": "next"}`, and brings that
   component along when it was not chosen;
-- commits `release: <id>@<version>, …` to `main`.
+- commits `release: <id>@<version>, …` locally. The CN live workflow requires this commit to be validated before publication.
 
 A version stamped but never published (no tag) keeps its number at the next
 run; new Unreleased lines join its section.
@@ -203,26 +220,21 @@ gh workflow run release.yml -f dry_run=false                   # release them
 gh workflow run release.yml -f components="mgu-python" -f dry_run=false   # some components
 ```
 
-The workflow checks out `main` with its history and tags, installs the
-build toolchain (Node 22.12.0; Go 1.27.2 for `mgu-uplink`; the runner's
-Docker builds `mgu-render` and `mgu-uplink`'s wpa_supplicant), runs
-`stamp` (Versions, above) and pushes the release commit to `main`, then
-`release.js publish --stamped` with the workflow's own `GITHUB_TOKEN`
-(contents: write). `--stamped` publishes what `stamp` chose, and any
-version tagged but missing from the catalog (a publish that stopped
-part-way). Each is built twice from the release commit and published only
-when both builds give the same bytes. A dry run stamps and builds without
-pushing or publishing. The push fails when `main` moved since the
-checkout: run the workflow again. No other token, and no developer machine,
-is involved. `publish` to GitHub refuses to run outside Actions;
-`--dry-run` runs anywhere. Every action is pinned to a commit.
+The workflow checks out `main` with its history and tags and installs Node
+22.12.0 and Go 1.27.2; Docker builds the native renderer and uplink dependencies.
+A dry run stamps and builds in the runner without pushing or publishing. For a
+live release, prepare and commit the numeric versions, validate that exact
+commit, and then run the workflow with `dry_run=false`. The publisher checks the
+CN integration status before uploading, builds each selected component twice,
+and preserves the upstream component-specific checks. It refuses a live GitHub
+publish outside Actions. Every action is pinned to a commit.
 
-The releases are GitHub Releases of `robertnisipeanu/mgu-store`, which
-the car reads like any public repository.
+GitHub assets belong to `Wallezy/mgu-store-cn`. Vehicle runtime catalogs and
+artifact URLs use the independent domestic snapshot described above.
 
 | Target (`MGU_PUBLISH`) | Layout | The unit reads it with |
 |---|---|---|
-| `github:<owner>/<repo>` (the workflow's repository) | release `<id>@<version>` per version, its artifact the one asset; release `catalog` holding `catalog.json` and the icons it names | a `github` source |
+| `github:Wallezy/mgu-store-cn` | release `<id>@<version>` per version, its artifact the one asset; release `catalog` holding `catalog.json` and the icons it names | a `github` source |
 | `dir:<path>` (relative paths: to the repository) | `catalog.json`, its icons and the artifacts side by side in a local folder, for a test unit or a USB stick | a `file` source, a USB stick, or the folder served over HTTPS (`https` source) |
 
 `publish` requires a clean working tree, builds HEAD, uploads each new

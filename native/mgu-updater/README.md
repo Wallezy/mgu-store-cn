@@ -1,7 +1,63 @@
 # mgu-updater
 
-The head unit's updater: a root daemon that reads its **sources** (GitHub
-repos, catalog URLs, USB sticks), compares what they list with what is
+## CN distribution
+
+The `walle-cn` distribution keeps the component IDs, service paths and installed
+source identities. Its built-in Store source is
+`https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json`; its managed map source is
+`https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json`.
+These catalogs are separate from the unmodified upstream mirrors.
+
+With `distribution_channel = walle-cn`, known stable official repositories and
+the maintained Beijing/Hangzhou mirror URLs are normalized to these catalogs
+in memory. Startup does not rewrite `sources.json`, `origins.json` or aliases.
+An existing source ID referenced by installed components is retained. Multiple
+referenced identities in one repository, or a custom source occupying a required
+identity, stop source loading and changes with an error; no identity is guessed
+or silently removed. Existing unrelated HTTPS/file sources are preserved. Fresh CN setups
+use only the two managed sources, and do not add GitHub default repositories.
+USB copies identifying a known official repository or maintained mirror retain
+that same installed source identity; arbitrary USB sources are left unchanged.
+GitHub source types and GitHub-hosted HTTPS sources are excluded from runtime.
+Their stored definitions and all credential files remain intact for recovery,
+including after an explicit edit to the active sources. CN does not construct
+the GitHub token store or login client. GitHub source probing, adding an account,
+signing in, account refresh and token removal are disabled.
+The state reports `github: false`, `distribution: "walle-cn"`, no accounts and
+no sign-in. Other channels retain the existing protocol and GitHub behavior.
+
+The managed sources cannot be removed or added again under a second URL. Other HTTPS
+sources remain manageable through the Store. A later explicit source-management
+operation saves the effective definitions in the normal schema, which older
+updaters can read. Returning to upstream transport is a separate migration,
+not an automatic effect of installing an older updater.
+An explicitly selected USB package keeps the normal install rules, including
+upstream packages. It is not a verified way to switch the distribution back.
+
+CN source caches live in `state/sources-walle-cn/` and must match the exact
+source definition. A cached GitHub artifact URL cannot satisfy the new catalog.
+Managed catalogs carry `"distribution": "walle-cn"`; their packages and icons
+must use HTTPS under `mgu.walle.pw/mgu/cn/`. A missing distribution marker,
+external or signed resource URL makes the source fail validation.
+The fetch child refuses known GitHub-owned domains before connecting, including
+each redirect from a custom HTTPS source. Legitimate non-GitHub HTTPS resources
+remain supported; this host policy does not claim to classify every third-party
+hosting provider.
+
+An online updater trial requires a successfully read CN Store catalog containing
+the Store, deploy tool and at least the running updater version. An unrelated
+source response or an old cache cannot commit the trial. Its poll reads only
+the managed Store source, so an unrelated source cannot delay that check.
+Local installer trials retain the offline setup path and still require valid source normalization and
+a responding deploy tool. The supervisor and its rollback behavior are retained.
+
+`test/test_cn_sources.js` checks normalization, collisions, preserved identities,
+cache isolation, disabled GitHub execution, rejected external resources and the online trial predicate on
+the host or Node 8. This does not certify a head-unit installation, self-update
+or rollback; those integration checks are required before release.
+
+The head unit's updater: a root daemon that reads its **sources** (catalog URLs,
+USB sticks; GitHub repos outside the CN distribution), compares what they list with what is
 installed, and downloads, builds and installs new versions of apps and
 root tools, itself included, and removes them on request. The Store app
 (`apps/robertn_store`) is its screen, the phone page (`js/web.js`) its
@@ -52,7 +108,8 @@ them:
 
 ```json
 { "schema": 1, "sources": [
-  { "id": "mgu-store", "type": "github", "repo": "robertnisipeanu/mgu-store", "builtin": true },
+  { "id": "mgu-store", "type": "https", "url": "https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json", "builtin": true },
+  { "id": "idrive-apps", "type": "https", "url": "https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json" },
   { "id": "idrive7-apps", "type": "github", "repo": "someone/idrive7-apps", "channel": "branch:main" },
   { "id": "s-3f9a",    "type": "https",  "url": "https://example.org/repo/catalog.json" }
 ] }
@@ -62,11 +119,11 @@ them:
   read). `https`: a
   `catalog.json` URL, or an App Manager index (below). `file`: a local
   folder (tests).
-- `builtin`: the Store's own source (`builtin_repo`, id `mgu-store`),
+- `builtin`: the Store's own source (id `mgu-store`; `builtin_repo`
+  outside the CN distribution),
   always there and not removable.
 - **Default sources** (`default_sources`: `<owner>/<repo>[:<channel>]`
-  separated by spaces; `cauliflowermossgrape/idrive7-apps:branch
-  robertnisipeanu/idrive-apps:releases IterioDev/car-apps:tags`): each is
+  separated by spaces; disabled in the CN distribution): each is
   added once, at the first start of an updater that names it, unless a
   source of that repo is there already (the installers seed it too,
   `deploy/sources.json`). `state/default-sources.json` (`{"added":
@@ -79,7 +136,7 @@ them:
   assets, repo trees), its sha256 is taken on download. A `signature` in a
   catalog is ignored.
 - A source that cannot be read keeps the components it listed last
-  (`state/sources/<id>.json`).
+  (`state/sources/<id>.json`, or `state/sources-walle-cn/<id>.json` for CN).
 
 **GitHub without a token.** GitHub's REST API allows an address without
 a token 60 requests an hour, and a mobile network puts many cars behind
@@ -504,7 +561,7 @@ removes the App Manager and leaves what it installed. The updater requires
 the unit are the deploy tool's `status --json` `idrive7.apps`
 (deploy/README.md, "idrive7-apps' own installer"). Each that has no origin
 yet gets one, the same way: the github source reading
-`cauliflowermossgrape/idrive7-apps` (a default source, "First start") is
+`cauliflowermossgrape/idrive7-apps` (when the owner adds that source) is
 its origin once it has read that repository and the repository lists the
 app; one a complete listing (nothing left out) does not name is
 `imported` (in `state/appmanager.json` too), and so is every app while no
@@ -514,9 +571,9 @@ repository's newer version and installs it over the app, under its uid.
 
 **First start.** The installers seed `sources.json` (the deploy tool's
 `updater-sources`, from `deploy/sources.json`) and never replace
-one that is there. Until it exists the updater reads the built-in source
-and the default sources not yet added; adding a default source, or the
-first change to the sources, writes it.
+one that is there. Until it exists the CN updater reads its two managed
+sources in memory; the first change to the sources writes it. Outside the
+CN distribution it reads the built-in source and adds configured defaults.
 
 ## What it does
 
@@ -830,7 +887,7 @@ container's address as the hotspot's.
 
 `updater.conf` (in the version folder) holds the defaults;
 `/var/opt/mgu-updater/updater.local.conf` overrides any key and survives
-updates. Keys: `sources`, `credentials_dir`, `builtin_repo`, `default_sources`,
+updates. Keys: `sources`, `credentials_dir`, `distribution_channel`, `builtin_repo`, `default_sources`,
 `github_client_id`, `github_app_url`, `github_api`, `github_web`, `github_raw`, `github_codeload`, `ca_file`,
 `check_interval_s`, `first_check_s`, `mounts`, `usb_roots`, `usb_poll_s`,
 `repo_max_bytes`, `build_uid`, `build_gid`, `build_timeout_s`,
@@ -1093,6 +1150,7 @@ node /var/opt/mgu-updater/current/updater.js install <id>
 bin/mgu-updater          supervisor, the service's main process
 js/updater.js            daemon and command line
 js/sources.js            sources.json, USB media, reading each layout
+js/cn_sources.js         CN source identities, catalog policy, cache and trial checks
 js/tokens.js             the tokens (credentials/), and the per-source files of 0.2.x converted
 js/catalog.js            catalog parsing (schema 1 and 2), installed-vs-source plan
 js/tar.js                .tar.gz in memory: reading a repo tarball, packing a component

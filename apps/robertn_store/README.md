@@ -1,5 +1,12 @@
 # robertn_store 0.9.26
 
+In the CN distribution, updater 0.8.40 reports `github: false`: Settings has no
+Accounts, GitHub sign-in or token entry. Add source accepts HTTPS catalogs;
+GitHub repository discovery is unavailable in both the widget and drawn UI.
+Saved upstream credential data is retained for recovery but is not used.
+The GitHub screens documented below apply only when an updater supports them.
+
+
 The Store: every app and head-unit tool of every source, each with its
 state, the progress of the running install, the sources, the phone page
 and the uplink's Wi-Fi.

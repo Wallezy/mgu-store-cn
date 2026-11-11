@@ -24,7 +24,8 @@ els.addType.value = 'github';
 Object.defineProperty(els.addChannel, 'textContent', { set() { this.children = []; }, get() { return ''; } });
 Object.defineProperty(els.addChannel, 'value', { get() { return this.children[0] ? this.children[0].value : ''; }, set() {} });
 const sent = [];
-let answer = null;
+let pageState = { updater: { version: 'x' }, online: true, sources: [], tokens: [], components: [] };
+let pollPage;
 const pending = [];
 global.document = { getElementById: el, createElement: () => ({ value: '', textContent: '', appendChild() {} }) };
 global.location = { hash: '#t=abc', pathname: '/', reload() {} };
@@ -32,12 +33,12 @@ global.history = { replaceState() {} };
 global.sessionStorage = { setItem() {}, getItem: () => 'abc', removeItem() {} };
 global.window = { addEventListener() {} };
 global.confirm = () => true;
-global.setInterval = () => 0;
+global.setInterval = (fn) => { pollPage = fn; return 0; };
 global.fetch = (path, o) => {
     const body = o && o.body ? JSON.parse(o.body) : null;
     if (body) { sent.push(body); }
     const reply = body && body.op === 'source-probe' ? new Promise((r) => pending.push(r)) :
-        Promise.resolve({ updater: { version: 'x' }, online: true, sources: [], tokens: [], components: [] });
+        Promise.resolve(pageState);
     return reply.then((j) => ({ status: 200, ok: true, json: () => Promise.resolve(j || { ok: true }) }));
 };
 new Function(js)();
@@ -106,5 +107,35 @@ const assert = require('assert');
     submit();
     await tick();
     assert.deepStrictEqual(sent, [{ op: 'source-add', type: 'https', url: 'https://example.org/catalog.json' }]);
+    // A CN updater disables all account controls and repository probes while
+    // preserving the public HTTPS form and the phone's access token.
+    sent.length = 0;
+    els.addType.value = 'github';
+    els.addValue.value = 'old/repo';
+    pageState = Object.assign({}, pageState, { github: false, signin: true,
+        login: { status: 'pending', code: 'fixture', url: 'https://github.com/login/device' } });
+    pollPage();
+    await tick();
+    assert.strictEqual(els.githubAccounts.hidden, true);
+    assert.strictEqual(els.githubSource.disabled, true);
+    assert.strictEqual(els.addType.hidden, true);
+    assert.strictEqual(els.addType.value, 'https');
+    assert.strictEqual(els.login.hidden, true);
+    assert.strictEqual(els.loginStart.hidden, true);
+    els.loginStart.onclick();
+    els.loginCancel.onclick();
+    els.tokenValue.value = 'fixture-token';
+    els.tokenForm.onsubmit({ preventDefault() {} });
+    els.addType.value = 'github';
+    els.addValue.value = 'owner/repo';
+    els.addValue.onchange();
+    submit();
+    await tick();
+    assert.deepStrictEqual(sent, [], 'CN controls cannot send login, token or GitHub source requests');
+    els.addType.value = 'https';
+    els.addValue.value = 'https://mgu.walle.pw/community/catalog.json';
+    submit();
+    await tick();
+    assert.deepStrictEqual(sent, [{ op: 'source-add', type: 'https', url: 'https://mgu.walle.pw/community/catalog.json' }]);
     console.log("page: all pass");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Where release.js publishes, chosen by MGU_PUBLISH (default
- * github:robertnisipeanu/mgu-store):
+ * github:Wallezy/mgu-store-cn):
  *
  *   github:<owner>/<repo>  GitHub Releases of the repository: each version
  *                          is the release <id>@<version> with its artifact
@@ -27,8 +27,9 @@ const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
+const cn = require('./cn_policy');
 
-const TARGET = process.env.MGU_PUBLISH || 'github:robertnisipeanu/mgu-store';
+const TARGET = process.env.MGU_PUBLISH || 'github:Wallezy/mgu-store-cn';
 const REPO = path.join(__dirname, '..');
 const KIND = TARGET.slice(0, TARGET.indexOf(':'));
 const WHERE = KIND === 'dir' ? path.resolve(REPO, TARGET.slice(TARGET.indexOf(':') + 1)) : TARGET.slice(TARGET.indexOf(':') + 1);
@@ -117,8 +118,13 @@ function catalogRelease() {
 
 /* Publishing to GitHub runs in GitHub Actions (.github/workflows/release.yml). */
 function githubPreflight(dryRun) {
+    cn.checkTarget(WHERE);
     if (!dryRun && process.env.GITHUB_ACTIONS !== 'true') {
         throw new Error('publishing runs in GitHub Actions: run the Release workflow (release/README.md)');
+    }
+    if (!dryRun) {
+        const sha = cp.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
+        cn.checkValidation(sha, JSON.parse(gh(['api', `repos/${WHERE}/commits/${sha}/status`])));
     }
 }
 

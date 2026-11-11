@@ -1,9 +1,7 @@
 {
   "schema": 1,
   "sources": [
-    { "id": "mgu-store", "type": "github", "repo": "robertnisipeanu/mgu-store", "builtin": true },
-    { "id": "idrive7-apps", "type": "github", "repo": "cauliflowermossgrape/idrive7-apps", "channel": "branch" },
-    { "id": "idrive-apps", "type": "github", "repo": "robertnisipeanu/idrive-apps", "channel": "releases" },
-    { "id": "car-apps", "type": "github", "repo": "IterioDev/car-apps", "channel": "tags" }
+    { "id": "mgu-store", "type": "https", "url": "https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json", "builtin": true },
+    { "id": "idrive-apps", "type": "https", "url": "https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json" }
   ]
 }

@@ -1,9 +1,17 @@
-# mgu-store
+# mgu-store-cn
 
 [English](README.md) | 简体中文
 
+**开发预览：目前没有可上车的 CN 正式安装版本。**
+
+本项目基于 [robertnisipeanu/mgu-store](https://github.com/robertnisipeanu/mgu-store)，
+保留原组件身份，提供独立的国内更新通道。已有中文 README 和代码渲染截图来自维护者的
+中文文档贡献；当前上游已包含简体中文，不重复移植过期汉化补丁。
+来源迁移、自更新和组件更新顺序仍需车机集成验收，详见 [国内发行版说明](docs/CN-DISTRIBUTION.md)。
+
 适用于宝马 iDrive 7 和 iDrive 8 车机（MGU）的应用商店。可以直接在车机屏幕上，
-浏览、安装、更新和移除来自 GitHub 仓库、网址或 U 盘的应用。
+浏览、安装、更新和移除来自国内 HTTPS 目录或 U 盘的应用。国内版不提供 GitHub
+登录、令牌或 GitHub 仓库来源功能。
 
 安装内容包括：
 
@@ -15,12 +23,13 @@
 - **Python**：供需要在车机上从源码构建的应用使用；
 - **互联网连接组件**：通过 USB 网卡、LTE 上网卡、手机共享网络或 Wi-Fi 联网。
 
-iDrive 8 目前仅在模拟器中测试，尚未经过实车验证。iDrive 8 上的安装和移除操作
+iDrive 8 尚未经过实车验证。iDrive 8 上的安装和移除操作
 会在下一次车机重启后生效。
 
 ## 界面截图
 
-以下为商店界面代码使用简体中文和示例数据生成的图片，并非实车拍摄。
+以下为既有上游商店界面使用简体中文和示例数据生成的参考图片，并非实车拍摄，
+也不是国内版验收截图。国内版不包含旧图里的 GitHub 来源管理功能。
 示例中的应用、版本和状态不代表当前发布目录。生成方式见
 [截图说明](docs/screenshots/README.md)。
 
@@ -36,18 +45,10 @@ iDrive 8 目前仅在模拟器中测试，尚未经过实车验证。iDrive 8 �
 
 ![简体中文已安装页面，展示应用、工具及其版本](docs/screenshots/installed.zh-CN.png)
 
-设置：管理来源、Wi-Fi、账号和手机访问。
-
-![简体中文设置页面，展示来源和访问设置](docs/screenshots/settings.zh-CN.png)
-
-添加 GitHub 仓库：选择发行版、标签或分支。
-
-![简体中文添加来源页面，展示可选的发行版和分支](docs/screenshots/add-source.zh-CN.png)
-
 ## 使用条件
 
 - 一台 Windows 10/11、macOS 或 Linux 电脑（x64 或 arm64），
-  配备 OpenSSH 客户端，这三个系统均内置该客户端。
+  安装 Node.js 18+ 和 OpenSSH 客户端；Windows 可能需要单独启用 OpenSSH。
 - 车机的 root SSH 访问权限及对应私钥。可以使用
   [idrive7-8-ssh-root](https://github.com/cauliflowermossgrape/idrive7-8-ssh-root)
   等工具，通过 ENET 线设置。
@@ -55,69 +56,15 @@ iDrive 8 目前仅在模拟器中测试，尚未经过实车验证。iDrive 8 �
   ENET 或其他 SSH 连接方式。
 - 车辆停稳，并在安装完成前保持稳定供电。
 
-## 安装
+## 安装状态
 
-将电脑连接到车机（车载 Wi-Fi 热点或 ENET 线），然后指定 root 的 SSH 私钥运行安装器：
+目前不要用此开发仓库替换正在工作的商店。国内版计划使用
+`https://mgu.walle.pw/mgu/cn/`，与保留官方原包的 `/mgu/` 镜像隔离；
+此处不宣称国内版目录、安装器或实车验收已经完成。
 
-```sh
-# macOS, Linux
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- first-install --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) first-install --identity $HOME\.ssh\mgu_root_key
-```
-
-安装器会自动查找车机，并显示所使用的连接方式。下文的其他命令
-（`token`、`usb-repo`、`first-install --from`）也可以用相同方式运行，
-替换上述命令中的 `first-install …` 即可。
-
-安装器询问 `Restart the head unit now? [y/N]` 时，输入 `y` 重启车机。
-之后，商店图标会出现在车机应用列表中，后续更新均可通过商店完成。
-
-| 参数 | 作用 |
-|---|---|
-| `--identity <file>` | root 的 SSH 私钥 |
-| `--host <address>`、`--port <n>` | 指定车机 SSH 地址，未指定端口时使用 22；使用 SSH 配置别名时，通过 `--port` 指定其端口 |
-| `--user <name>` | SSH 用户名，默认为 `root` |
-| `--ssh-opt <option>` | 附加的 `ssh -o` 选项，例如 `ConnectTimeout=30`，可多次指定。通过跳板机连接时也需指定 `--host`：`--host <head unit> --ssh-opt ProxyJump=<jump host>` |
-| `--token` | 提示输入用于访问私有仓库的 GitHub 令牌 |
-| `--no-uplink` | 不安装互联网连接组件 |
-| `--no-renderer` | 不安装渲染器 |
-| `--no-restart-prompt` | 结束时不询问是否重启车机 |
-
-如果电脑已安装 [Node.js](https://nodejs.org) 18 或更高版本，也可以直接运行脚本：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/mgu-install.js | node - first-install --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/mgu-install.js -OutFile mgu-install.js; if ($?) { node mgu-install.js first-install --identity $HOME\.ssh\mgu_root_key }
-```
-
-## 卸载
-
-将安装器命令中的 `first-install` 替换为 `uninstall`，即可移除商店：
-
-```sh
-# macOS, Linux
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- uninstall --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) uninstall --identity $HOME\.ssh\mgu_root_key
-```
-
-安装器会列出通过商店安装的应用和工具（包括其他仓库的工具），并询问
-`Remove all of it? [y/N]`，也可用 `--yes` 自动确认。随后会移除这些内容、
-安装过程对车机所作的更改，以及商店设置和令牌。
-
-结束时会显示是否还有残留；再次运行可继续清理。需要重启才能完成时，
-会询问 `Restart the head unit now? [y/N]`。卸载使用相同的车机发现方式，
-并支持相同的 SSH 参数（`--identity`、`--host`、`--port`、`--user`、`--ssh-opt`）。
+已有官方版继续使用其受支持的维护方式。更换发行版不应以先卸载商店为前提。
+通过指定版本的来源迁移、自更新和更新顺序验收后，才会开放国内版安装入口。
+返回官方版的边界及发布检查见 [国内发行版说明](docs/CN-DISTRIBUTION.md)。
 
 ## 使用商店
 
@@ -126,55 +73,26 @@ curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/depl
 - **应用商店**：展示来源中的应用和工具，以及已安装、可更新、待重启等状态。
 - **已安装**：查看已安装的内容，使用**更新**或**全部更新**。
 - **USB**：查看插入的 U 盘中的内容。
-- **设置**：管理来源、Wi-Fi、账号、代理和手机访问，也可**检查更新**或**重启主机**。
+- **设置**：管理来源、Wi-Fi、代理和手机访问，也可**检查更新**或**重启主机**。
 
 打开应用或工具即可安装、更新或移除。更新不会自行安装。
 标记为待重启的工具需要重启车机后才能生效（设置 → **重启主机**）。
 
 ### 来源
 
-商店预置以下来源：本仓库、
-[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)、
-[idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
-（包含仪表盘和 HUD 渲染器，以及仪表盘 CarPlay 地图），以及
-[car-apps](https://github.com/IterioDev/car-apps)
-（IterioDev 的应用和工具，大部分仅适用于 iDrive 8，跟踪最新的 x.y.z 标签）。
+国内版管理两个独立目录：商店及基础组件、仪表盘/HUD 地图应用。两者均位于
+`https://mgu.walle.pw/mgu/cn/`，不会在下载失败时回退到 GitHub。
+现有官方或旧镜像来源按保留的组件身份迁移；旧 GitHub 来源与账号功能停用，
+原资料保留用于恢复，不继续自动访问。来源身份不明确时拒绝猜测迁移。
 
-添加来源：设置 → **添加来源**，输入 `owner/repo`、GitHub 链接，
-或 `catalog.json` 的 `https://` 地址。对于 GitHub 仓库，
-可根据仓库提供的内容，选择跟踪**发行版**、**标签**或某个分支。
-
-在 iDrive 8 上，使用 mgu-render 绘制商店时，添加来源和添加令牌会打开
-商店的屏幕键盘。未使用 mgu-render 的原生控件界面目前尚不支持 iDrive 8 输入；
-可通过手机页面或电脑添加来源和令牌，也可以使用 **GitHub 登录**。
-
-### 私有仓库
-
-在设置 → **账号**中添加账号：
-
-- **GitHub 登录**：扫描二维码，在手机上输入代码并登录。
-  对应仓库还需要安装 [mgu-store GitHub App](https://github.com/apps/mgu-store)。
-- **添加令牌**：输入 GitHub 令牌。相比车机，使用手机页面，
-  或在电脑上运行 `node mgu-install.js token --identity <key>` 输入更方便。
-
-**创建令牌：**
-
-1. 打开 github.com，依次进入头像 → **Settings** → **Developer settings** →
-   **Personal access tokens** → **Fine-grained tokens** → **Generate new token**。
-2. 输入名称并设置有效期；选择 *No expiration* 可避免令牌到期后车机无法继续访问。
-3. **Resource owner**：选择你的账号或仓库所属组织，一个令牌对应一个所有者。
-4. **Repository access**：选择 **Only select repositories**，
-   勾选车机需要读取的私有仓库。
-5. **Permissions**：添加 **Contents**，权限设为 **Read-only**。
-6. 点击 **Generate token** 并复制令牌（`github_pat_…`）；GitHub 只显示一次。
-
-组织可能需要先批准令牌。访问其他人账号下的仓库时，改用带有 `repo` 权限范围的
-classic token。
+其他应用可通过完整的 HTTPS 发布目录或 USB 包提供。国内版不直接读取
+GitHub 仓库、分支、标签或私有仓库，也不提供登录和令牌管理。
+源码托管、作者署名和开发文档中的 GitHub 链接仅用于开发与溯源。
 
 ### 手机页面
 
 设置 → **手机访问** → 开启后会显示二维码。手机连接车载热点后扫码，
-即可查看来源、安装状态、错误和日志，也能使用手机键盘添加来源和账号。
+即可查看来源、安装状态、错误和日志，也能使用手机键盘添加 HTTPS 来源。
 使用完毕后关闭手机访问。
 
 ### 联网
@@ -192,57 +110,23 @@ classic token。
 
 连接成功后，商店会显示在线状态。
 
-### 代理
+### 离线维护与自己的应用
 
-如果访问 GitHub 缓慢或受阻，更新器可以通过同一网络中的代理下载，
-例如电脑或路由器上的 Clash。在设置 → **代理**中开启代理并填写地址，
-例如 `http://192.168.8.1:7890` 或 `socks5://192.168.8.1:7891`。
-需要密码的代理可使用 `socks5://user:password@192.168.8.1:7891`。
-更新器的所有下载，以及车机上的构建过程，都会使用该代理。
-关闭后恢复直接下载。手机页面也提供相同设置。
+已验证版本仍可使用安装器的本地 `--from` 和 `usb-repo` 路径；电脑准备本地包
+不等于已挂载到车机。USB 导入与安装操作通过商店支持的入口完成。
+国内版正式发布前，不提供开发包上车步骤。
 
-## 离线使用：U 盘
-
-车机没有互联网连接时，可以通过 U 盘安装和更新。在电脑上运行：
-
-```sh
-node mgu-install.js usb-repo <stick> [github:owner/repo | <catalog URL> | <folder> | <package file> ...]
-```
-
-不指定输入来源时，会复制本仓库的最新发行版。将 U 盘插入车机后，
-在商店的 **USB** 页面中操作。
-
-尚未安装商店的车机，也可以使用同一文件夹进行安装，无需车机联网：
-
-```sh
-node mgu-install.js first-install --from <stick>/mgu-repo/mgu-store --identity <key>
-```
-
-## 发布自己的应用
-
-GitHub 仓库或 HTTPS 地址均可作为来源，支持三种组织方式：
-
-| 方式 | 内容 |
-|---|---|
-| Releases | 将构建好的 `<id>@<version>.tgz`（或 `.mgu`）包作为 GitHub Release 附件发布 |
-| Catalog | 用 `catalog.json` 列出各个包，放在名为 `catalog` 的 Release 中，或任意 HTTPS 地址上 |
-| Repo tree | 提供 `mgu-repo.json`，由车机从源码构建应用 |
-
-每个应用需要满足：
-
-- **不包含宝马 SDK 文件。** 车机会将应用与已有 SDK 链接。
-- **唯一且带前缀的 id**，例如 `acme_gauges`。
-- **`mguHmi`**：填写 `["ID7"]`、`["ID8"]` 或同时支持两者。
-- **`requires`**（可选）：声明依赖的组件，安装时先安装依赖。
-- 需要联网时，在 `package.json` 中设置 **`"mguInternet": true`**。
-
-完整指南和示例见 [docs/PUBLISHING.md](docs/PUBLISHING.md)。
+自己的应用可通过 HTTPS `catalog.json` 目录发布，列出包的大小、SHA-256、
+组件 ID、版本及 `requires` 依赖。应用保留唯一 ID，按实际兼容性声明 `mguHmi`，
+不得包含 BMW SDK；车机需要时从已有 SDK donor 构建源码包。
+[发布格式](docs/PUBLISHING.md)还保留上游通用格式说明，其中 GitHub 模式
+不适用于国内版运行时。
 
 ## 开发
 
 各组件的 README 分别介绍构建和测试方法。
 [`deploy/README.md`](deploy/README.md) 包含完整安装器参考
-（包括 `token --list` / `--remove` 等命令），以及从本地源码安装组件的 `deploy/hu`；
+以及部署工具的开发参考；
 [`release/README.md`](release/README.md) 介绍发布流程。
 PR 中的版本号、CHANGELOG 条目和 `requires` 规则见
 [`CONTRIBUTING.md`](CONTRIBUTING.md)。

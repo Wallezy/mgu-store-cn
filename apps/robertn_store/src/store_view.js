@@ -409,14 +409,26 @@ function branchName(text) {
     return BRANCH.test(b) && b.indexOf('..') < 0 && !/\/$|\.lock$/.test(b) ? b : null;
 }
 
+/* Missing capabilities preserve compatibility with older upstream updaters. */
+function githubEnabled(st) {
+    return !st || st.github !== false;
+}
+
 /* The source typed in the speller: { type: 'github', repo, channel? } for
  * owner/repo or a github.com address of a repo (with or without https://,
  * .git or a trailing slash; .../tree/<branch> gives the channel
  * branch:<branch>), { type: 'https', url } for any other https address with
  * a path (the scheme in lower case), null for anything else. A repo
- * without a channel is offered on what it has (pickOptions). */
-function parseSource(text) {
+ * without a channel is offered on what it has (pickOptions). CN accepts
+ * HTTPS catalogs only; the updater enforces the same policy on redirects. */
+function parseSource(text, github = true) {
     const t = String(text || '').trim();
+    if (!github) {
+        const url = t.replace(/^https:\/\//i, 'https://');
+        const host = /^https:\/\/(?:[^/@]*@)?([^/:?#]+)/i.exec(url);
+        const blocked = host && /(^|\.)(github\.com|githubusercontent\.com|githubassets\.com|github\.io|ghcr\.io)\.?$/i.test(host[1]);
+        return !blocked && HTTPS.test(url) && url.length <= 2048 ? { type: 'https', url } : null;
+    }
     const gh = GITHUB_REPO.exec(t);
     if (gh) {
         const branch = gh[2] === undefined ? '' : branchName(gh[2]);
@@ -513,6 +525,6 @@ function sourcesMessage(m) {
     }
 }
 
-module.exports = { setClusterTime, clock, setupable, proxyUrlError, localized, listed, startPending, sourceAuthor, sourceNames, withSources, removable, requiredAlone, undoable, hmiNames, notForUnit, parseSource, pickOptions, probeStatus, neededBy, removeRefusal, sourcesMessage, tokenMessage, PHASE, percent, rowState, rowAction, groupState, statusLine, sourceLabel, sourceState,
+module.exports = { githubEnabled, setClusterTime, clock, setupable, proxyUrlError, localized, listed, startPending, sourceAuthor, sourceNames, withSources, removable, requiredAlone, undoable, hmiNames, notForUnit, parseSource, pickOptions, probeStatus, neededBy, removeRefusal, sourcesMessage, tokenMessage, PHASE, percent, rowState, rowAction, groupState, statusLine, sourceLabel, sourceState,
     sourcesState, sourceActions, sourceChannel, sourceAccount, tokenLabel, tokenState, tokenSources, accountsState, loginStatus, loginCode,
     phoneState, phoneAddress };

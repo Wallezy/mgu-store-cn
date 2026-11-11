@@ -537,6 +537,11 @@ function startHttps(certs, dir) {
                 res.end();
                 return;
             }
+            if (req.url === '/redirect-github') {
+                res.writeHead(302, { Location: `https://github.com:${HTTPS_PORT}/payload.bin` });
+                res.end();
+                return;
+            }
             if (req.url.indexOf('/private/') === 0 && auth !== 'Bearer tok-https') {
                 res.writeHead(401);
                 res.end();
@@ -650,14 +655,16 @@ function testShipped() {
         shipped.indexOf('py/sitecustomize.py') >= 0, JSON.stringify(needed));
     ok('shipped: component.json installs each file it names (web.js once the phone page is in this tree)',
         component.files.every((f) => f.path === 'web.js' || fs.existsSync(path.join(ROOT, f.from))) && shipped.indexOf('web.js') >= 0);
-    ok('shipped: the mgu-store GitHub App\'s client id and page', conf.github_client_id === 'Iv23li9nab1iob4a6eyC' &&
-        conf.github_app_url === 'https://github.com/apps/mgu-store');
+    ok('shipped: CN has no GitHub configuration or builtin repository',
+        !Object.keys(conf).some((k) => /^github_/.test(k) || k === 'builtin_repo'));
     const { Updater } = require('../js/updater');
     const dir = fs.mkdtempSync(path.join(T, 'shipped-'));
     const shippedState = new Updater(Object.assign({}, conf, { state_dir: dir, credentials_dir: path.join(dir, 'cred'),
         sources: path.join(dir, 'sources.json'), lease: path.join(dir, 'lease.json'), log_file: '' })).state();
-    ok('shipped: GitHub sign-in is offered, with the App\'s install page', shippedState.signin === true &&
-        JSON.stringify(shippedState.signinApp) === JSON.stringify({ installUrl: 'https://github.com/apps/mgu-store/installations/new' }));
+    ok('shipped: CN disables GitHub accounts and preserves credentials without reading them',
+        shippedState.github === false && shippedState.distribution === 'walle-cn' &&
+        shippedState.signin === false && shippedState.signinApp === null && shippedState.login === null &&
+        shippedState.tokens.length === 0 && !fs.existsSync(path.join(dir, 'cred')));
     ok('shipped: no catalog key and no signing settings',
         !shipped.some((f) => /\.pem$/.test(f)) && conf.public_key === undefined && conf.catalog === undefined &&
         !fs.readdirSync(ROOT).some((f) => /\.pem$/.test(f)));
@@ -666,7 +673,7 @@ function testShipped() {
         ['build', 'fetch', 'web'].every((r) => conf[`${r}_uid`] === undefined && conf[`${r}_gid`] === undefined) &&
         conf.socket_group === 'tm_oap_app' && conf.web_port === '8470' &&
         conf.web_iface === 'wlan_bridge' && conf.web_secret === '/run/mgu-updater/web-secret' &&
-        conf.usb_roots === '/media' && conf.store_app === 'robertn_store' && 'github_client_id' in conf);
+        conf.usb_roots === '/media' && conf.store_app === 'robertn_store' && conf.distribution_channel === 'walle-cn');
 }
 
 function testCatalog() {
@@ -1104,6 +1111,25 @@ function testFetch(certs, pubDir) {
         })
         .then((r) => {
             ok('fetch: the fetch uid cannot write outside its folder', r.code !== 0 && !fs.existsSync('/root/forbidden.bin'));
+            seen.length = 0;
+            return runFetch(Object.assign({}, base, { denyGithub: true, url: `https://github.com:${HTTPS_PORT}/payload.bin`,
+                dest: path.join(dl, 'cn-direct') }), FETCH_UID);
+        })
+        .then((r) => {
+            ok('CN fetch: a direct GitHub request is refused before connecting',
+                r.code !== 0 && r.events.some((e) => /GitHub downloads are disabled/.test(e.error || '')) && seen.length === 0);
+            return runFetch(Object.assign({}, base, { denyGithub: true, url: `https://updates.test:${HTTPS_PORT}/redirect-github`,
+                dest: path.join(dl, 'cn-redirect') }), FETCH_UID);
+        })
+        .then((r) => {
+            ok('CN fetch: a custom HTTPS redirect to GitHub is refused before connecting to it',
+                r.code !== 0 && r.events.some((e) => /GitHub downloads are disabled/.test(e.error || '')) &&
+                seen.length === 1 && seen[0].url === '/redirect-github');
+            return runFetch(Object.assign({}, base, { denyGithub: true, url: `https://updates.test:${HTTPS_PORT}/payload.bin`,
+                dest: path.join(dl, 'cn-https'), maxBytes: 300000 }), FETCH_UID);
+        })
+        .then((r) => {
+            ok('CN fetch: an unrelated HTTPS resource still downloads', r.code === 0 && r.events.some((e) => e.done));
         });
 }
 
@@ -1550,6 +1576,7 @@ function testDaemon(certs, pubDir) {
         `state_dir = ${path.join(T, 'state')}`,
         `tool_root = ${opt}`, `oap_root = ${oap}`, `socket = ${sock}`, 'socket_group = staff',
         'first_check_s = 0', 'check_interval_s = 3600', `privacy_tool = ${privacyTool}`, 'default_sources =',
+        'distribution_channel =',
         `log_file = ${path.join(T, 'tmp', 'mgu-updater.log')}`, `reboot = ${rebootScript(path.join(T, 'daemon-reboot'))} reboot`,
         `web_secret = ${path.join(T, 'run', 'web-secret')}`,
         // the unit's uids as overrides (picking them: testUidsDaemon)
@@ -6426,17 +6453,15 @@ function testAnonymous(certs) {
         });
 }
 
-/* The shipped default sources (updater.conf) on an iDrive 7 unit: a copy of
+/* Configured third-party default sources on an iDrive 7 unit: a copy of
  * IterioDev/car-apps the owner added by hand keeps it from being added
  * again; on a unit without one it is added on its tags channel, read at the
  * newest x.y.z tag without a token (the apps pattern's folders the one API
  * request, for a new tag only), and its apps and tools for iDrive 8 only are
  * not for this unit: none is installed. */
 function testCarApps(certs) {
-    const { Updater, loadConf } = require('../js/updater');
-    process.env.MGU_UPDATER_CONF = path.join(T, 'no-local.conf');
-    const shipped = loadConf().default_sources;
-    delete process.env.MGU_UPDATER_CONF;
+    const { Updater } = require('../js/updater');
+    const shipped = 'cauliflowermossgrape/idrive7-apps:branch robertnisipeanu/idrive-apps:releases IterioDev/car-apps:tags';
     const M = path.join(T, 'car-apps');
     const opt = path.join(M, 'opt');
     const oap = path.join(M, 'oap');

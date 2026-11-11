@@ -26,6 +26,18 @@ const server = http.createServer((req, res) => {
         res.writeHead(status, { 'Content-Type': type || 'application/json' });
         res.end(body);
     };
+    // A public HTTPS-style distribution, independent of GitHub authentication.
+    if (req.url === '/catalog.json') {
+        const store = config.repos['robertnisipeanu/mgu-store'];
+        if (!store || store.catalog === undefined) {
+            return send(404, '{"message":"Not Found"}');
+        }
+        const data = JSON.parse(fs.readFileSync(config.files[store.catalog], 'utf8'));
+        data.components.forEach((c) => {
+            c.artifact.url = c.artifact.url.replace(/\/repos\/[^/]+\/[^/]+\/releases\/assets\//, '/blob/');
+        });
+        return send(200, JSON.stringify(data));
+    }
     const blob = /^\/blob\/(\d+)$/.exec(req.url);
     if (blob) {
         return send(200, fs.readFileSync(config.files[Number(blob[1])]), 'application/octet-stream');

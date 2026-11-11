@@ -1,0 +1,30 @@
+name: CN source checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+      - name: Publication policy
+        run: node release/test/cn_distribution_test.js
+      - name: CN snapshot preparation
+        run: python3 -m unittest discover -s release/test -p 'test_*.py' -v
+      - name: Updater compatibility
+        run: sh native/mgu-updater/test/run.sh
+      - name: Local installer
+        run: node deploy/test/cn_installer.js
+# These fixtures do not set release-check/cn-integration.

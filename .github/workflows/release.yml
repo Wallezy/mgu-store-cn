@@ -1,10 +1,7 @@
-# Releases what changed on main (release/README.md): gives each changed
-# component its next version, commits that to main as "release: ...", then
-# publishes the new versions to this repository's GitHub Releases with the
-# catalog.json the car's updater reads. Run it by hand
-# (Actions, Release), with the component ids to release or none for every
-# changed one; a dry run shows the versions and builds them without pushing
-# or publishing.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+# CN publication uses an already stamped and integration-validated main commit.
+# A dry run can stamp locally; it never pushes or publishes.
 name: Release
 
 on:
@@ -22,18 +19,18 @@ on:
 permissions:
   contents: write
   pull-requests: read
-  # release-check/<id> on a gated component's source commit (release/README.md)
   statuses: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
-# Actions are pinned to commits.
+# Actions are pinned to commits: each runs in the job that holds the
+# contents: write token.
 jobs:
   publish:
     # main only: the release commit goes on top of it
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.repository == 'Wallezy/mgu-store-cn'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,14 +46,16 @@ jobs:
         with:
           node-version: 22.12.0
 
-      # mgu-uplink's Go build. Its wpa_supplicant (native/mgu-uplink/wpa) and
-      # mgu-render build in the runner's Docker, in Ubuntu 18.04 images.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.2
 
-      # the next versions, from the labels of the merged pull requests
-      - name: Stamp
+      - name: Check CN publication policy
+        run: node release/test/cn_distribution_test.js
+
+      # Real publication requires the committed version to pass integration.
+      - name: Stamp dry run
+        if: ${{ inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
           COMPONENTS: ${{ inputs.components }}
@@ -69,29 +68,22 @@ jobs:
           node release/release.js stamp $COMPONENTS
           git log -1 --stat
 
-      # fails when main moved on since the checkout: run the release again
-      - name: Push the release commit
-        if: ${{ !inputs.dry_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
-            echo 'no release commit'
-            exit 0
-          fi
-          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/main
-
-      # No oap-sdk donor here: the Store publishes as its source package,
-      # which the head unit builds.
+      # the tools' builds run make target: Docker, preinstalled on the runner
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          MGU_PUBLISH: github:${{ github.repository }}
+          MGU_PUBLISH: github:Wallezy/mgu-store-cn
+          MGU_PUBLISH_VISIBILITY: any
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
-        # the stamped and selected components, and any a stopped run left unlisted
-        run: node release/release.js publish --stamped $DRY_RUN
+          COMPONENTS: ${{ inputs.components }}
+        # publish.js checks release-check/cn-integration on the exact HEAD.
+        run: |
+          if [ -n "$DRY_RUN" ]; then
+            node release/release.js publish --stamped --dry-run
+          else
+            # shellcheck disable=SC2086 # component ids, each one argument
+            node release/release.js publish $COMPONENTS
+          fi
 
       - name: Published catalog
         if: always()

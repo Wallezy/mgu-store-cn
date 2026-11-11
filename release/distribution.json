@@ -1,0 +1,5 @@
+{
+  "repository": "Wallezy/mgu-store-cn",
+  "catalog": "https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json",
+  "validationContext": "release-check/cn-integration"
+}

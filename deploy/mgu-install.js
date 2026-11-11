@@ -6,26 +6,24 @@
  * no dependencies: Node 18 or newer and the system's OpenSSH client, on
  * Windows, macOS or Linux (deploy/README.md, "mgu-install").
  *
- *   node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [--token] [--no-restart-prompt] [<ssh options>]
- *   node mgu-install.js token [--list [--json] | --remove <id>] [<ssh options>]
+ *   node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [--no-restart-prompt] [<ssh options>]
  *   node mgu-install.js uninstall [--yes] [--from <folder>] [--no-restart-prompt] [<ssh options>]
  *   node mgu-install.js status [<ssh options>]
  *   node mgu-install.js usb-repo <stick folder> [<input>...]
  *
- * first-install downloads the newest published mgu-store release (the
+ * first-install downloads the published CN catalog's mgu-store release (the
  * deploy tool, app-privacy, the updater, the Store's source package, the
  * renderer the Store draws its screens with and the internet uplink;
  * --no-renderer and --no-uplink leave those two out, and one the deploy tool
  * refuses is left out), checks each file against the
  * catalog's size and sha256, sends them to the unit and installs them with
  * the release's own deploy tool, which builds the Store on the unit. Newer
- * installed components are kept; running it again is safe. --token adds a
- * GitHub token for the updater afterwards. When the head unit needs a
+ * installed components are kept; running it again is safe. When the head unit needs a
  * restart to finish, it asks at a terminal whether to restart it now
  * (not under CI, nor with --no-restart-prompt).
  *
  * first-install --from <folder> installs from a folder usb-repo wrote
- * (<folder>/mgu-repo/mgu-store) instead of GitHub, each file checked
+ * (<folder>/mgu-repo/mgu-store) instead of the online catalog, each file checked
  * against its catalog the same way: download at home, install at the car
  * without internet.
  *
@@ -42,18 +40,12 @@
  * the unit; with a deploy tool older than its read-only status, that
  * status may also repair things, as the updater's does at its start.
  *
- * token adds a GitHub token for the updater (no option), lists the tokens
- * (--list: id, label, account; --json as JSON) or removes one (--remove
- * <id>, an id --list names). A token is read from a hidden
- * prompt, or from stdin when stdin is not a terminal; it is never an
- * argument, never printed.
- *
  * usb-repo writes a local repository onto a stick: one folder
  * mgu-repo/<name>/ per input, which the updater reads as a source while the
- * stick is in. Inputs: github:<owner>/<repo>, an https:// catalog.json URL,
+ * stick is in. Inputs: an https:// catalog.json URL,
  * a folder holding catalog.json or mgu-repo.json, or package files (*.tgz,
  * *.mgu: apps, source packages, tool kits; together in mgu-repo/local/).
- * Without inputs: github:robertnisipeanu/mgu-store.
+ * Without inputs: the CN mgu-store HTTPS catalog.
  *
  * Without --host or --port it finds the head unit itself: the
  * car's hotspot (172.16.222.97) when its SSH answers, else over ENET (an
@@ -68,9 +60,8 @@
  *
  * It also runs from stdin: curl -fsSL <url> | node - first-install ...
  *
- * Downloads from a private GitHub repository take a token: the one given
- * with --token, else `gh auth token` when the GitHub CLI is signed in, else
- * a hidden prompt. Exit status: 0 done, 1 failed, 2 refused or bad usage.
+ * CN downloads reject GitHub hosts, including redirects. Setup does not read
+ * or remove existing credentials. Exit status: 0 done, 1 failed, 2 refused or bad usage.
  */
 const fs = require('fs');
 const os = require('os');
@@ -82,8 +73,7 @@ const net = require('net');
 const dgram = require('dgram');
 const tty = require('tty');
 
-const STORE_REPO = 'robertnisipeanu/mgu-store';
-const GITHUB_API = process.env.MGU_INSTALL_GITHUB_API || 'https://api.github.com';
+const STORE_CATALOG = process.env.MGU_INSTALL_CATALOG || 'https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json';
 const HOTSPOT_IP = '172.16.222.97';
 /* the hotspot address detection tries first (<host>[:<port>]; the tests point it elsewhere) */
 const HOTSPOT = process.env.MGU_INSTALL_HOTSPOT || HOTSPOT_IP;
@@ -98,17 +88,14 @@ const LAST_ENET = path.join(os.homedir(), '.cache', 'mgu-store', 'last_hu_enet_i
 /* run as `node -` with the script on stdin */
 const FROM_STDIN = __filename === '[stdin]';
 /* the updater's sources first-install seeds when it has none (deploy/sources.json) */
-const SOURCES = { schema: 1, sources: [{ id: 'mgu-store', type: 'github', repo: STORE_REPO, builtin: true },
-    { id: 'idrive7-apps', type: 'github', repo: 'cauliflowermossgrape/idrive7-apps', channel: 'branch' },
-    { id: 'idrive-apps', type: 'github', repo: 'robertnisipeanu/idrive-apps', channel: 'releases' },
-    { id: 'car-apps', type: 'github', repo: 'IterioDev/car-apps', channel: 'tags' }] };
+const SOURCES = { schema: 1, sources: [
+    { id: 'mgu-store', type: 'https', url: 'https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json', builtin: true },
+    { id: 'idrive-apps', type: 'https', url: 'https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json' }
+] };
 /* the installed deploy tool */
 const DEPLOY = '/var/opt/mgu-deploy/mgu-deploy.sh';
-const UPDATER_JS = '/var/opt/mgu-updater/current/updater.js';
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const ASSET = /^([a-z0-9][a-z0-9_-]{0,63})@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\.(tgz|mgu)$/;
-const TOKEN = /^[\x21-\x7e]{1,512}$/;
 const MAX_ARTIFACT = 512 << 20;
 /* what the updater reads from a stick (native/mgu-updater/js/sources.js) */
 const STICK_JSON_MAX = 1 << 20;
@@ -211,22 +198,20 @@ function untgz(buf, max) {
 /* https only; plain http to this machine for tests. */
 function checkUrl(u) {
     const url = new URL(u);
+    if (/(^|\.)(github\.com|githubusercontent\.com|githubassets\.com|github\.io|ghcr\.io)\.?$/i.test(url.hostname)) {
+        throw new Usage('GitHub downloads are not supported by the CN installer');
+    }
     if (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))) {
         return url;
     }
     throw new Usage(`not an https URL: ${u}`);
 }
 
-/* GET url's body, at most max bytes. A token goes to the GitHub API host
- * only, never to a host a redirect leads to. */
-async function get(url, { token, accept, max } = {}) {
-    const apiHost = new URL(GITHUB_API).host;
+/* GET url's body, at most max bytes. Every redirect passes the CN URL policy. */
+async function get(url, { accept, max } = {}) {
     let u = checkUrl(url);
     for (let hop = 0; hop < 8; hop += 1) {
         const headers = { 'User-Agent': 'mgu-install', Accept: accept || '*/*' };
-        if (token && u.host === apiHost) {
-            headers.Authorization = `Bearer ${token}`;
-        }
         let res;
         try {
             res = await fetch(u, { headers, redirect: 'manual' });
@@ -266,17 +251,6 @@ function checked(name, data, size, hash) {
     return data;
 }
 
-/* ---- tokens -------------------------------------------------------------------------- */
-
-function readAll(stream) {
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        stream.on('data', (c) => chunks.push(Buffer.from(c)));
-        stream.on('end', () => resolve(Buffer.concat(chunks)));
-        stream.on('error', reject);
-    });
-}
-
 /* The terminal to prompt at: stdin, or the terminal device when the
  * script itself came on stdin; null when there is none. */
 function terminal() {
@@ -291,180 +265,6 @@ function terminal() {
     } catch (e) {
         return null;
     }
-}
-
-/* A line typed at the terminal, not echoed. */
-function promptHidden(question, input) {
-    return new Promise((resolve, reject) => {
-        process.stderr.write(question);
-        input.setRawMode(true);
-        input.setEncoding('utf8');
-        input.resume();
-        let text = '';
-        const end = (err) => {
-            input.removeListener('data', onData);
-            input.setRawMode(false);
-            input.pause();
-            if (input !== process.stdin) {
-                input.destroy();
-            }
-            process.stderr.write(os.EOL);
-            if (err) {
-                reject(err);
-            } else {
-                resolve(text);
-            }
-        };
-        const onData = (chunk) => {
-            for (const ch of chunk) {
-                if (ch === '\r' || ch === '\n') {
-                    end(null);
-                    return;
-                }
-                if (ch === '\u0003' || ch === '\u0004') {
-                    end(new Usage('cancelled'));
-                    return;
-                }
-                if (ch === '\u007f' || ch === '\b') {
-                    text = text.slice(0, -1);
-                } else if (ch >= ' ') {
-                    text += ch;
-                }
-            }
-        };
-        input.on('data', onData);
-    });
-}
-
-let stdinTaken = false;
-
-/* A GitHub token: a hidden prompt at a terminal, else stdin (once). */
-async function readToken(question, term = terminal()) {
-    let text;
-    if (term) {
-        text = await promptHidden(question, term);
-    } else if (FROM_STDIN) {
-        throw new Usage('a token is needed and there is no terminal to type it at; run the downloaded file with node instead');
-    } else if (!stdinTaken) {
-        stdinTaken = true;
-        text = (await readAll(process.stdin)).toString('utf8');
-    } else {
-        throw new Usage('a token is needed and stdin was read already; run it at a terminal');
-    }
-    text = text.trim();
-    if (!TOKEN.test(text)) {
-        throw new Usage(text ? 'a token is 1 to 512 printable characters without spaces' : 'no token given');
-    }
-    return text;
-}
-
-/* The GitHub CLI's token, when it is installed and signed in. */
-function ghToken() {
-    const r = cp.spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-    const t = r.status === 0 ? String(r.stdout).trim() : '';
-    return TOKEN.test(t) ? t : null;
-}
-
-/* ---- GitHub ---------------------------------------------------------------------------- */
-
-/* A repo through the REST API, read with the first of: no token, the
- * given one, the GitHub CLI's, a prompted one, that reaches it. */
-async function githubRepo(repo, given) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(repo)) {
-        throw new Usage(`not a GitHub repository: ${repo}`);
-    }
-    const base = `${GITHUB_API.replace(/\/+$/, '')}/repos/${repo}`;
-    const tries = [() => null, () => given || null, ghToken,
-        () => {
-            const term = terminal();
-            return term ? readToken(`GitHub token for ${repo} (input hidden): `, term) : null;
-        }];
-    let token = null;
-    let reached = false;
-    let last = null;
-    for (let i = 0; i < tries.length; i += 1) {
-        const t = await tries[i]();
-        if (i > 0 && !t) {
-            continue;
-        }
-        try {
-            await get(base, { token: t, accept: 'application/vnd.github+json', max: 1 << 20 });
-            token = t;
-            reached = true;
-            break;
-        } catch (e) {
-            last = e;
-            if (![401, 403, 404].includes(e.status)) {
-                throw e;
-            }
-        }
-    }
-    if (!reached) {
-        throw new Error(`${repo}: no access (${last && last.message}); give a token with access to it`);
-    }
-    const json = async (rel) => JSON.parse((await get(`${base}${rel}`, { token, accept: 'application/vnd.github+json', max: 8 << 20 })).toString('utf8'));
-    const asset = (a, max) => get(a.url, { token, accept: 'application/octet-stream', max });
-    return { repo, json, asset };
-}
-
-/* A GitHub repo's published components: its `catalog` release's
- * catalog.json, else the newest <id>@<x.y.z>.tgz (or .mgu) asset of each
- * id in its releases. [{ entry, fetch() }] */
-async function githubComponents(gh) {
-    let release = null;
-    try {
-        release = await gh.json('/releases/tags/catalog');
-    } catch (e) {
-        if (e.status !== 404) {
-            throw e;
-        }
-    }
-    if (release) {
-        const a = (release.assets || []).find((x) => x.name === 'catalog.json');
-        if (!a) {
-            throw new Error(`${gh.repo}: the catalog release has no catalog.json`);
-        }
-        const catalog = parseCatalog((await gh.asset(a, 4 << 20)).toString('utf8'), `${gh.repo} catalog.json`);
-        return { commit: catalog.commit, components: catalog.components.map((entry) => ({
-            entry, fetch: () => gh.asset({ url: entry.artifact.url }, entry.artifact.size)
-                .then((d) => checked(entry.artifact.name, d, entry.artifact.size, entry.artifact.sha256))
-        })) };
-    }
-    const releases = await gh.json('/releases?per_page=100');
-    const newest = new Map();
-    let meta = null;
-    (Array.isArray(releases) ? releases : []).filter((r) => r && !r.draft && !r.prerelease).forEach((r) => {
-        (r.assets || []).forEach((a) => {
-            if (a.name === 'mgu-store.json' && !meta) {
-                meta = a;
-            }
-            const m = ASSET.exec(a.name || '');
-            if (!m || !(a.size > 0)) {
-                return;
-            }
-            const have = newest.get(m[1]);
-            const cmp = have ? compareVersions(m[2], have.version) : 1;
-            if (cmp > 0 || (cmp === 0 && m[3] === 'tgz' && have.ext !== 'tgz')) {
-                newest.set(m[1], { id: m[1], version: m[2], ext: m[3], asset: a });
-            }
-        });
-    });
-    if (!newest.size) {
-        throw new Error(`${gh.repo}: no catalog release and no <id>@<x.y.z>.tgz or .mgu in its releases`);
-    }
-    let titles = {};
-    if (meta) {
-        try {
-            titles = JSON.parse((await gh.asset(meta, 1 << 20)).toString('utf8')).apps || {};
-        } catch (e) { /* titles are optional */ }
-    }
-    return { commit: null, components: Array.from(newest.values()).sort((a, b) => (a.id < b.id ? -1 : 1)).map((n) => {
-        const t = titles && typeof titles[n.id] === 'object' && titles[n.id] ? titles[n.id] : {};
-        const entry = { id: n.id, kind: 'app', version: n.version,
-            title: typeof t.title === 'string' ? t.title : n.id, description: typeof t.description === 'string' ? t.description : '',
-            artifact: { name: `${n.id}@${n.version}.tgz`, size: n.asset.size, sha256: null }, uninstallable: true };
-        return { entry, file: n.asset.name, fetch: () => gh.asset(n.asset, n.asset.size).then((d) => checked(n.asset.name, d, n.asset.size, null)) };
-    }) };
 }
 
 /* Checks a catalog (schema 1 or 2, release/README.md) as the updater does. */
@@ -741,7 +541,7 @@ function notFound(d) {
 }
 
 /* Sets the SSH target: as given, or the head unit findUnit finds; which
- * one on stderr (stdout may be token --list --json). */
+ * one on stderr. */
 async function reach(o, d = NET) {
     if (o.given) {
         o.host = o.host || HOTSPOT_IP;
@@ -904,16 +704,15 @@ function unpackKit(q) {
 }
 
 async function firstInstall(o) {
-    // --from: its catalog is read first, so a missing or bad one stops before the token prompt and the unit search
+    // --from: its catalog is read first, so a missing or bad one stops before the unit search
     const from = o.from ? fromFolder(o.from) : null;
     const local = from ? dirComponents(from) : null;
-    const label = from || STORE_REPO;
-    const token = o.token ? await readToken('GitHub token for the updater (input hidden): ') : null;
+    const label = from || STORE_CATALOG;
     await reach(o);
     if (!checkCoding(o)) {
         return 2;
     }
-    const { components } = local || await githubComponents(await githubRepo(STORE_REPO, token));
+    const { components } = local || await urlComponents(STORE_CATALOG);
     const wanted = WITH.filter((w) => !o[w.skip]);
     const chosen = components.filter((c) => !c.entry.optional || wanted.some((w) => w.id === c.entry.id));
     const withs = wanted.filter((w) => chosen.some((c) => c.entry.id === w.id));
@@ -942,12 +741,6 @@ async function firstInstall(o) {
     if (run.status !== 0) {
         say(`first-install: the install on the unit ended with status ${run.status}`);
         return run.status === 2 ? 2 : 1;
-    }
-    if (token) {
-        const t = addToken(o, token);
-        if (t !== 0) {
-            return t;
-        }
     }
     const services = [{ id: 'mgu-updater', unit: 'mgu-updater.service' }].concat(withs);
     // the status on stderr, shown as it comes; which services run on stdout (absent: not installed), then the status as JSON
@@ -1007,41 +800,6 @@ function tilesShow(line) {
         return { shown: true };
     }
     return fb.refused ? { shown: false, why: fb.refused } : { shown: false };
-}
-
-/* ---- token -------------------------------------------------------------------------------- */
-
-/* Adds a token through the deploy tool (on stdin); a running updater reads
- * its sources again with it. */
-function addToken(o, token) {
-    const r = ssh(o, `sh ${DEPLOY} updater-token && if systemctl is-active mgu-updater.service >/dev/null 2>&1; then ` +
-        `{ /usr/bin/node ${UPDATER_JS} check >/dev/null 2>&1 && echo 'the updater read its sources with it' || ` +
-        `echo 'the updater uses it from its next check'; }; else echo 'the updater uses it once it runs'; fi`,
-    { input: Buffer.from(`${token}\n`) });
-    return r.status;
-}
-
-/* --list and --remove need a deploy tool that keeps tokens as their own
- * entries (0.2.3): an older one lists nothing and removes its single token
- * whatever id it is given. */
-const TOKENS_DEPLOY = `/usr/bin/node -e "var v=require('/var/opt/mgu-deploy/current/component.json').version.split('.').map(Number);` +
-    `process.exit(v[0]>0||v[1]>2||(v[1]===2&&v[2]>=3)?0:3)" || ` +
-    `{ echo 'the deploy tool on the unit is older than 0.2.3: install its update from the Store first' >&2; exit 2; }; `;
-
-async function tokenCommand(o) {
-    // no stdin: these read no token
-    if (o.remove !== null && !/^[0-9a-f]{8}$/.test(o.remove)) {
-        throw new Usage(`not a token id: ${o.remove}`);
-    }
-    const token = o.list || o.remove !== null ? null : await readToken('GitHub token for the updater (input hidden): ');
-    await reach(o);
-    if (o.list) {
-        return ssh(o, `${TOKENS_DEPLOY}sh ${DEPLOY} updater-token --list${o.json ? ' --json' : ''}`, { input: Buffer.alloc(0) }).status;
-    }
-    if (o.remove !== null) {
-        return ssh(o, `${TOKENS_DEPLOY}sh ${DEPLOY} updater-token --remove ${shQuote(o.remove)}`, { input: Buffer.alloc(0) }).status;
-    }
-    return addToken(o, token);
 }
 
 /* ---- uninstall ------------------------------------------------------------------------------ */
@@ -1115,10 +873,10 @@ async function uninstall(o) {
     let kit = null;
     if (which !== 'installed') {
         // the deploy tool on the unit has no remove-all: the published one removes the setup
-        const { components } = from ? dirComponents(from) : await githubComponents(await githubRepo(STORE_REPO, null));
+        const { components } = from ? dirComponents(from) : await urlComponents(STORE_CATALOG);
         const c = components.find((x) => x.entry.id === 'mgu-deploy');
         if (!c) {
-            throw new Error(`${from || STORE_REPO}: the catalog has no mgu-deploy`);
+            throw new Error(`${from || STORE_CATALOG}: the catalog has no mgu-deploy`);
         }
         kit = deployToolFiles(await c.fetch());
     }
@@ -1323,7 +1081,7 @@ function writeFolder(dest, files, catalog) {
     fs.rmSync(old, { recursive: true, force: true });
 }
 
-/* A published source (GitHub repo or catalog URL) as a stick folder. */
+/* A published catalog as a stick folder. */
 async function publishedFolder(components, commit, label) {
     const files = [];
     const entries = [];
@@ -1453,19 +1211,15 @@ function copyOf(source) {
     return { name: 'mgu-copy.json', data: Buffer.from(`${JSON.stringify({ copyOf: source })}\n`) };
 }
 
-/* The GitHub repository a checkout's origin remote names (owner/repo), or null. */
-function githubOrigin(dir) {
-    const r = cp.spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true });
-    const m = r.status === 0 && /github\.com[:/]([A-Za-z0-9-]+\/[A-Za-z0-9._-]+?)(?:\.git)?\/?\s*$/.exec(r.stdout);
-    return m ? m[1] : null;
-}
-
 async function usbRepo(o) {
     const stick = path.resolve(o.stick);
     if (!fs.existsSync(stick) || !fs.statSync(stick).isDirectory()) {
         throw new Usage(`not a folder: ${o.stick}`);
     }
-    const inputs = o.inputs.length ? o.inputs : [`github:${STORE_REPO}`];
+    const inputs = o.inputs.length ? o.inputs : [STORE_CATALOG];
+    if (inputs.some((input) => input.startsWith('github:'))) {
+        throw new Usage('GitHub imports are not supported by the CN installer; use an HTTPS catalog or local files');
+    }
     const repoDir = path.join(stick, 'mgu-repo');
     fs.mkdirSync(repoDir, { recursive: true });
     const names = new Set();
@@ -1479,17 +1233,10 @@ async function usbRepo(o) {
     };
     const packages = [];
     for (const input of inputs) {
-        if (input.startsWith('github:')) {
-            const repo = input.slice('github:'.length);
-            const name = unique(folderName(repo.split('/')[1] || repo));
-            say(`${input} -> mgu-repo/${name}/`);
-            const gh = await githubRepo(repo, null);
-            const { commit, components } = await githubComponents(gh);
-            const out = await publishedFolder(components, commit, input);
-            writeFolder(path.join(repoDir, name), out.files.concat([copyOf(input)]), out.catalog);
-        } else if (/^https?:\/\//.test(input)) {
+        if (/^https?:\/\//.test(input)) {
             const u = checkUrl(input);
-            const name = unique(folderName(`${u.hostname}-${path.posix.basename(path.posix.dirname(u.pathname)) || 'catalog'}`));
+            const name = unique(input === STORE_CATALOG ? 'mgu-store' :
+                folderName(`${u.hostname}-${path.posix.basename(path.posix.dirname(u.pathname)) || 'catalog'}`));
             say(`${input} -> mgu-repo/${name}/`);
             const { commit, components } = await urlComponents(u.toString());
             const out = await publishedFolder(components, commit, input);
@@ -1506,16 +1253,15 @@ async function usbRepo(o) {
                 const out = await publishedFolder(components, commit, input);
                 writeFolder(path.join(repoDir, name), out.files, out.catalog);
             } else if (fs.existsSync(path.join(dir, 'mgu-repo.json'))) {
-                const gh = githubOrigin(dir);
-                writeFolder(path.join(repoDir, name), checkoutFiles(dir).concat(gh ? [copyOf(`github:${gh}`)] : []), null);
-                say(`  a repository checkout${gh ? ` of ${gh}` : ''}: the unit builds its components`);
+                writeFolder(path.join(repoDir, name), checkoutFiles(dir), null);
+                say('  a repository checkout: the unit builds its components');
             } else {
                 throw new Usage(`${input}: no catalog.json or mgu-repo.json`);
             }
         } else if (fs.existsSync(input) && fs.statSync(input).isFile()) {
             packages.push({ file: input, data: fs.readFileSync(input) });
         } else {
-            throw new Usage(`not a github:<owner>/<repo>, an https:// catalog URL, a folder or a package file: ${input}`);
+            throw new Usage(`not an https:// catalog URL, a folder or a package file: ${input}`);
         }
     }
     if (packages.length) {
@@ -1557,8 +1303,11 @@ const USAGE = SOURCE === null ? 'usage: deploy/README.md, "mgu-install"' : SOURC
     .map((l) => l.replace(/^ \* ?/, '')).join('\n').trimEnd();
 
 function parse(argv) {
+    if (argv[0] === 'token' || argv.includes('--token')) {
+        throw new Usage('GitHub token operations are not supported by the CN installer');
+    }
     const o = { command: argv[0], host: null, port: '22', bind: null, given: false, user: 'root', identity: null, sshOpts: [],
-        noRenderer: false, noUplink: false, token: false, noRestartPrompt: false, yes: false, list: false, json: false, remove: null, from: null, rest: [] };
+        noRenderer: false, noUplink: false, noRestartPrompt: false, yes: false, from: null, rest: [] };
     const value = (i, flag) => {
         if (i >= argv.length) {
             throw new Usage(`${flag} needs a value`);
@@ -1574,13 +1323,9 @@ function parse(argv) {
         else if (a === '--ssh-opt') o.sshOpts.push(value(++i, a));
         else if (a === '--no-renderer' && o.command === 'first-install') o.noRenderer = true;
         else if (a === '--no-uplink' && o.command === 'first-install') o.noUplink = true;
-        else if (a === '--token' && o.command === 'first-install') o.token = true;
         else if (a === '--no-restart-prompt' && ['first-install', 'uninstall'].includes(o.command)) o.noRestartPrompt = true;
         else if (a === '--from' && ['first-install', 'uninstall'].includes(o.command)) o.from = value(++i, a);
         else if (a === '--yes' && o.command === 'uninstall') o.yes = true;
-        else if (a === '--list' && o.command === 'token') o.list = true;
-        else if (a === '--json' && o.command === 'token') o.json = true;
-        else if (a === '--remove' && o.command === 'token') o.remove = value(++i, a);
         else if (a.startsWith('--')) throw new Usage(`unknown option ${a} for ${o.command}\n${USAGE}`);
         else o.rest.push(a);
     }
@@ -1591,12 +1336,6 @@ function parse(argv) {
     }
     if (!/^[A-Za-z0-9._-]+$/.test(o.user) || (o.host !== null && !/^[A-Za-z0-9.:%_[\]-]+$/.test(o.host))) {
         throw new Usage('--user and --host take a plain name or address');
-    }
-    if (o.list && o.remove !== null) {
-        throw new Usage('token takes --list or --remove, not both');
-    }
-    if (o.json && !o.list) {
-        throw new Usage('--json goes with token --list');
     }
     return o;
 }
@@ -1610,11 +1349,11 @@ async function main(argv) {
     if (Number(process.versions.node.split('.')[0]) < 18) {
         throw new Usage(`Node 18 or newer is needed (this is ${process.version})`);
     }
-    if (['first-install', 'token', 'uninstall', 'status'].includes(o.command)) {
+    if (['first-install', 'uninstall', 'status'].includes(o.command)) {
         if (o.rest.length) {
             throw new Usage(`${o.command} takes no ${o.rest[0]}`);
         }
-        return { 'first-install': firstInstall, token: tokenCommand, uninstall, status: statusCommand }[o.command](o);
+        return { 'first-install': firstInstall, uninstall, status: statusCommand }[o.command](o);
     }
     if (o.command === 'usb-repo') {
         if (!o.rest.length) {

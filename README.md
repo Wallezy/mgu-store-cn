@@ -1,10 +1,17 @@
-# mgu-store
+# mgu-store-cn
 
 English | [简体中文](README.zh-CN.md)
 
+**Development preview: no CN installation release is available yet.** This
+community fork of [robertnisipeanu/mgu-store](https://github.com/robertnisipeanu/mgu-store)
+keeps the original component identities and adds a separate domestic update
+channel. Source migration and self-update need head-unit integration validation
+before public vehicle installation. See [CN distribution](docs/CN-DISTRIBUTION.md).
+
 An app store for BMW iDrive 7 and iDrive 8 head units (MGU). Browse,
-install, update and remove apps on the car's screen, from GitHub
-repositories, web addresses or a USB stick.
+install, update and remove apps on the car's screen from domestic HTTPS
+catalogs or a USB stick. This edition has no GitHub login, token management
+or GitHub repository sources.
 
 It installs:
 
@@ -21,6 +28,9 @@ installs and removals take effect at the next head-unit restart.
 
 ## Screenshots
 
+These are reference images from the upstream UI, not CN release validation.
+The CN edition does not include GitHub source or account management.
+
 The Store: apps and head-unit tools from every source.
 
 ![The Store page, listing installed tools and the apps available from the sources](docs/screenshots/store.png)
@@ -33,18 +43,10 @@ Installed: the apps and tools on the head unit.
 
 ![The Installed page, listing the installed apps and head-unit tools with their versions](docs/screenshots/installed.png)
 
-Settings: sources, Wi-Fi, accounts and phone access.
-
-![Settings, with the default sources, Wi-Fi, Accounts and Check now](docs/screenshots/settings.png)
-
-Adding a GitHub repository: pick its releases, tags or a branch.
-
-![Adding a GitHub repository as a source, offering Releases, Tags and its branches](docs/screenshots/add-source.png)
-
 ## Requirements
 
 - A computer (Windows 10/11, macOS or Linux, x64 or arm64) with the
-  OpenSSH client, which all three have built in.
+  OpenSSH client and Node.js 18+. Windows may need OpenSSH enabled separately.
 - Root SSH access to the head unit and root's private key. Tools such as
   [idrive7-8-ssh-root](https://github.com/cauliflowermossgrape/idrive7-8-ssh-root)
   set it up over an ENET cable.
@@ -52,74 +54,17 @@ Adding a GitHub repository: pick its releases, tags or a branch.
   address `172.16.222.97`), ENET, or any other SSH route.
 - The car parked and on stable power until the install finishes.
 
-## Install
+## Installation status
 
-Connect the computer to the head unit (the car's Wi-Fi hotspot or an ENET
-cable), then run the installer with root's SSH key:
+Do not replace a working Store with this development checkout. The planned CN
+installer and updater use `https://mgu.walle.pw/mgu/cn/`, separate from the
+unmodified upstream mirror at `/mgu/`. No ready CN catalog, installer or
+head-unit validation is claimed here.
 
-```sh
-# macOS, Linux
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- first-install --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) first-install --identity $HOME\.ssh\mgu_root_key
-```
-
-It finds the head unit by itself and says which connection it used.
-The other commands below (`token`, `usb-repo`, `first-install --from`) run
-the same way, in place of `first-install …` in the one-liner.
-When the installer asks `Restart the head unit now? [y/N]`, answer `y`
-and it restarts the head unit. The Store's tile then appears among the
-car's apps, and every later update comes through the Store.
-
-| Option | What it does |
-|---|---|
-| `--identity <file>` | root's private SSH key |
-| `--host <address>`, `--port <n>` | reach the head unit at this SSH address instead (port 22 unless given); for an SSH config alias, give its port with `--port` |
-| `--user <name>` | SSH user (default `root`) |
-| `--ssh-opt <option>` | an extra `ssh -o` option, e.g. `ConnectTimeout=30`; repeatable. Through a jump host, give `--host` too: `--host <head unit> --ssh-opt ProxyJump=<jump host>` |
-| `--token` | asks for a GitHub token, for private repositories |
-| `--no-uplink` | leaves out the internet uplink |
-| `--no-renderer` | leaves out the renderer |
-| `--no-restart-prompt` | ends without asking to restart the head unit |
-
-With [Node.js](https://nodejs.org) 18 or newer, the installer also runs as
-a script:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/mgu-install.js | node - first-install --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/mgu-install.js -OutFile mgu-install.js; if ($?) { node mgu-install.js first-install --identity $HOME\.ssh\mgu_root_key }
-```
-
-## Uninstall
-
-To take the Store off the head unit, run the installer with `uninstall`
-in place of `first-install`:
-
-```sh
-# macOS, Linux
-curl -fsSL https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.sh | sh -s -- uninstall --identity ~/.ssh/mgu_root_key
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/robertnisipeanu/mgu-store/main/deploy/install.ps1))) uninstall --identity $HOME\.ssh\mgu_root_key
-```
-
-It lists the apps and tools installed through the Store, including other
-repositories' tools, and asks `Remove all of it? [y/N]` (`--yes` answers
-for you). It then removes them and everything the setup changed on the
-head unit, and the Store's settings and tokens with them. It ends with one
-line saying whether anything is left; running it again finishes what is
-left. When the head unit needs a restart to finish, it asks
-`Restart the head unit now? [y/N]`. It finds the head unit the same way
-and takes the same SSH options (`--identity`, `--host`, `--port`, `--user`,
-`--ssh-opt`).
+Existing upstream installations keep their supported maintenance path until
+an exact CN release passes the migration and update-order tests. Removing the
+Store is not a prerequisite for changing distributions. The release checklist
+and return-to-upstream boundary are in [CN distribution](docs/CN-DISTRIBUTION.md).
 
 ## Using the Store
 
@@ -129,7 +74,7 @@ The side menu has four pages:
   update available, restart pending, …).
 - **Installed**: what is installed, with **Update** and **Update all**.
 - **USB**: what a plugged-in USB stick offers.
-- **Settings**: sources, Wi-Fi, accounts, proxy, phone access, **Check now** and
+- **Settings**: sources, Wi-Fi, proxy, phone access, **Check now** and
   **Restart head unit**.
 
 Open an app or tool to install, update or remove it. Updates never install
@@ -138,56 +83,22 @@ restart (Settings → **Restart head unit**).
 
 ### Sources
 
-The Store comes with these sources: this repository,
-[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps),
-[idrive-apps](https://github.com/robertnisipeanu/idrive-apps) (with the
-renderer that draws on the instrument cluster and the HUD, and the CarPlay
-map on the instrument cluster) and
-[car-apps](https://github.com/IterioDev/car-apps) (IterioDev's apps and
-tools, most of them for iDrive 8 only, at its newest x.y.z tag).
+The CN edition manages two catalogs under `https://mgu.walle.pw/mgu/cn/`:
+Store infrastructure and the cluster/HUD apps. There is no automatic GitHub
+fallback. Known official/mirror identities are normalized without installing
+competing updater instances; ambiguous ownership blocks migration.
+Existing GitHub sources/accounts are inactive, with recovery data retained.
 
-To add one: Settings → **Add source**, then type `owner/repo`, a GitHub
-link, or the `https://` address of a `catalog.json`. For a GitHub
-repository, pick what to follow from what it has: **Releases**, **Tags** or
-one of its branches.
-
-On iDrive 8, Add source and Add token open the Store's on-screen keyboard
-while mgu-render draws the Store. On the Store's widget screens (no
-mgu-render), typing doesn't work yet on iDrive 8: add sources and tokens
-from the phone page or the computer, or use **Sign in with GitHub**.
-
-### Private repositories
-
-Add an account in Settings → **Accounts**:
-
-- **Sign in with GitHub**: scan the QR code, enter the code on your phone
-  and sign in. The repository also needs the
-  [mgu-store GitHub App](https://github.com/apps/mgu-store) installed.
-- **Add token**: a GitHub token. Typing it on the phone page or with
-  `node mgu-install.js token --identity <key>` on the computer is easier
-  than on the car.
-
-**Creating a token:**
-
-1. On github.com: your picture → **Settings** → **Developer settings** →
-   **Personal access tokens** → **Fine-grained tokens** →
-   **Generate new token**.
-2. Name it, and pick an expiration (*No expiration* keeps the car working).
-3. **Resource owner**: your account, or the organisation that owns the
-   repositories. One token covers one owner.
-4. **Repository access**: **Only select repositories**, and pick the private
-   repositories the car should read.
-5. **Permissions**: add **Contents**, set to **Read-only**.
-6. **Generate token** and copy it (`github_pat_…`); GitHub shows it once.
-
-An organisation may have to approve the token first. For a repository of
-someone else's account, use a classic token with the `repo` scope instead.
+Other apps can use complete HTTPS catalogs or USB packages. GitHub repository,
+branch, tag, private-repository, login and token features are unavailable in
+this edition. Source hosting, attribution and developer links on GitHub are
+separate from head-unit runtime downloads.
 
 ### Phone page
 
 Settings → **Phone access** → **On** shows a QR code. Scan it with a phone on the
 car's hotspot to see sources, installs, errors and logs, and to add sources
-and accounts with the phone's keyboard. Turn it off when done.
+with the phone's keyboard. Turn it off when done.
 
 ### Internet
 
@@ -205,62 +116,24 @@ through:
 
 The Store shows `Online` once connected.
 
-### Proxy
+### Offline maintenance and your apps
 
-Where GitHub is slow or blocked, the updater can download through a proxy
-on the same network, such as Clash on a computer or a router: Settings →
-**Proxy**, turn it on and type its address, `http://192.168.8.1:7890` or
-`socks5://192.168.8.1:7891`. A proxy that wants a password takes it as
-`socks5://user:password@192.168.8.1:7891`. Everything the updater
-downloads goes through it, and builds on the unit too. Turn it off to
-download directly again. The phone page has the same setting.
+Validated releases retain the local `--from` and `usb-repo` installer paths.
+A prepared computer folder is not a mounted USB source on the head unit.
+Use supported Store operations for USB imports and installation; this development
+edition has no approved vehicle installation instructions.
 
-## Offline: USB stick
-
-A car without internet installs and updates from a USB stick. On the
-computer:
-
-```sh
-node mgu-install.js usb-repo <stick> [github:owner/repo | <catalog URL> | <folder> | <package file> ...]
-```
-
-Without inputs it copies this repository's newest release. Plug the stick
-into the car and use the **USB** page.
-
-A car without the Store yet installs it from the same folder, with no
-internet at the car:
-
-```sh
-node mgu-install.js first-install --from <stick>/mgu-repo/mgu-store --identity <key>
-```
-
-## Publishing your apps
-
-Any GitHub repository or HTTPS address can be a source, in one of three
-layouts:
-
-| Layout | What the repository has |
-|---|---|
-| Releases | built `<id>@<version>.tgz` (or `.mgu`) packages attached to GitHub releases |
-| Catalog | a `catalog.json` listing each package (in a release named `catalog`, or at any HTTPS address) |
-| Repo tree | an `mgu-repo.json`; the head unit builds the apps from source |
-
-Every app needs:
-
-- **No BMW SDK files.** The head unit links apps against the SDK already on
-  it.
-- **A unique id**, with a prefix (`acme_gauges`).
-- **`mguHmi`**: `["ID7"]`, `["ID8"]` or both.
-- **`requires`** (optional): other components it needs, installed first.
-- **`"mguInternet": true`** in `package.json` if it needs internet.
-
-[docs/PUBLISHING.md](docs/PUBLISHING.md) has the full guide and examples.
+Publish your apps as an HTTPS `catalog.json` with package sizes, SHA-256 values,
+stable component IDs, versions and declared requirements. Apps declare compatible
+`mguHmi` targets and must not contain the BMW SDK; source packages link an existing
+donor on the unit when needed. [Publishing formats](docs/PUBLISHING.md) retain
+upstream reference material; their GitHub modes are not CN runtime features.
 
 ## Development
 
 Each component's README covers its build and tests.
 [`deploy/README.md`](deploy/README.md) has the full installer reference
-(every command, including `token --list`/`--remove`) and `deploy/hu`, which
+and `deploy/hu`, which
 installs components from a checkout; [`release/README.md`](release/README.md)
 covers releases. [`CONTRIBUTING.md`](CONTRIBUTING.md): versions, CHANGELOG
 entries and `requires` in a pull request.

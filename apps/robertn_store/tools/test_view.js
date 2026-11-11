@@ -25,6 +25,12 @@ const TOKEN_URL = 'http://172.16.222.97:8470/#t=0123abcd';
 const address = (w, file) => JSON.stringify(phoneAddress(w, file));
 const parsed = (text) => JSON.stringify(parseSource(text));
 const cases = [
+    [JSON.stringify(parseSource('owner/repo', false)), 'null'],
+    [JSON.stringify(parseSource('https://github.com/owner/repo', false)), 'null'],
+    [JSON.stringify(parseSource('https://raw.githubusercontent.com/owner/repo/main/catalog.json', false)), 'null'],
+    [JSON.stringify(parseSource('https://owner.github.io/catalog.json', false)), 'null'],
+    [JSON.stringify(parseSource('https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json', false)),
+        '{"type":"https","url":"https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json"}'],
     [parsed('someone/idrive7-apps'), '{"type":"github","repo":"someone/idrive7-apps"}'],
     [parsed('  Owner-1/repo.name_x  '), '{"type":"github","repo":"Owner-1/repo.name_x"}'],
     [parsed('https://github.com/owner/repo'), '{"type":"github","repo":"owner/repo"}'],

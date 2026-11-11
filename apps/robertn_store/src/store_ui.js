@@ -47,7 +47,7 @@ const { t: tr } = require('./i18n.js');
  * 0.8.27) is a row in Settings and its page (proxy): on or off, and its
  * address; model.proxyNote is the refusal of the last change.
  */
-const { PHASE, percent, rowAction, statusLine, sourceLabel, sourceState, sourceActions, sourceChannel, sourceAccount,
+const { githubEnabled, PHASE, percent, rowAction, statusLine, sourceLabel, sourceState, sourceActions, sourceChannel, sourceAccount,
     tokenLabel, tokenState, tokenSources, accountsState, loginStatus, loginCode, phoneState, phoneAddress, hmiNames,
     notForUnit, removable, requiredAlone, undoable, setupable, pickOptions, probeStatus, removeRefusal, sourceNames, listed, startPending } = require('./store_view.js');
 
@@ -102,7 +102,7 @@ function sources(m) {
     return m.connected && m.st && Array.isArray(m.st.sources) ? m.st.sources : null;
 }
 function tokens(m) {
-    return m.connected && m.st && Array.isArray(m.st.tokens) ? m.st.tokens : null;
+    return m.connected && m.st && githubEnabled(m.st) && Array.isArray(m.st.tokens) ? m.st.tokens : null;
 }
 function find(list, id) {
     return (list || []).find((x) => x.id === id) || null;
@@ -474,14 +474,14 @@ function sourceView(m, id) {
             appQr: { text: '' }, appUrl: { text: '' }, remove: hidden };
     }
     const r = sourceRow(s);
-    const app = m.st && m.st.signinApp;
+    const app = githubEnabled(m.st) && m.st && m.st.signinApp;
     const signedIn = (tokens(m) || []).some((t) => !t.rejected);
     const installUrl = s.status === 'auth-needed' && app && app.installUrl && signedIn ? String(app.installUrl) : '';
     return {
         icon: { vicon: r.vicon, kind: 'service', colors: r.vicon === 'warning' ? '#ffc04d,#c98a12' : '#3a4352,#232a35' },
         name: { text: sourceLabel(s) },
         state: { text: sourceState(s), color: r.subColor },
-        facts: { items: [sourceChannel(s) && { text: sourceChannel(s) }, sourceAccount(s) && { text: sourceAccount(s) },
+        facts: { items: [sourceChannel(s) && { text: sourceChannel(s) }, githubEnabled(m.st) && sourceAccount(s) && { text: sourceAccount(s) },
             typeof s.components === 'number' && { text: plural(s.components, 'component') }].filter(Boolean) },
         desc: { text: s.error ? String(s.error) : '' },
         panel: { hidden: !installUrl },
@@ -502,8 +502,8 @@ function accountsView(m) {
             letter: tokenLabel(t)[0], colors: colors(t.id), kind: 'service', right: 'chevron',
             act: { do: 'open', page: { name: 'confirm', kind: 'account-remove', id: t.id } } })), empty: tr("None") },
         // Sign in with GitHub only with the updater's GitHub App (state.signin)
-        signIn: m.st && m.st.signin === true ? button(tr("Sign in with GitHub"), { do: 'sign-in' }, { vicon: 'plus', style: 'primary', color: BLUE }) : hidden,
-        addToken: m.connected && m.st ? button(tr("Add token"), { do: 'add-token' }, { vicon: 'plus', style: 'outline' }) : hidden
+        signIn: githubEnabled(m.st) && m.st && m.st.signin === true ? button(tr("Sign in with GitHub"), { do: 'sign-in' }, { vicon: 'plus', style: 'primary', color: BLUE }) : hidden,
+        addToken: githubEnabled(m.st) && m.connected && m.st ? button(tr("Add token"), { do: 'add-token' }, { vicon: 'plus', style: 'outline' }) : hidden
     };
 }
 
@@ -551,7 +551,8 @@ function typeView(m, page) {
     return {
         title: { text: page.title || '' },
         field: { text: page.secret ? masked(text, page.secret) : text, label: page.label ? page.label + short : '' },
-        keyboard: { layout: page.layout || 'url', shift: !!page.shift, symbols: !!page.symbols, sym: !!page.sym, go: page.go || 'OK' }
+        keyboard: { layout: page.layout || (githubEnabled(m.st) ? 'url' : 'https'),
+            shift: !!page.shift, symbols: !!page.symbols, sym: !!page.sym, go: page.go || 'OK' }
     };
 }
 
@@ -741,6 +742,10 @@ function view(m) {
     const page = m.stack[m.stack.length - 1] || { name: 'main' };
     const tabSel = Math.max(0, TABS.indexOf(m.tab));
     let screen = page.name === 'main' ? m.tab : page.name;
+    if (!githubEnabled(m.st) && (['accounts', 'pick', 'login'].indexOf(screen) >= 0 ||
+        (screen === 'confirm' && page.kind === 'account-remove'))) {
+        screen = 'settings';
+    }
     let values;
     switch (screen) {
     case 'store': values = storeView(m); break;

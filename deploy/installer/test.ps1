@@ -1,7 +1,7 @@
 # Tests deploy/install.ps1 on Windows against a folder of the installer
-# release's files served at $Base (SHA256SUMS and the executables), in the
+# files served at $Base (SHA256SUMS and mgu-install.js), in the
 # PowerShell running it: the one-liner's scriptblock and a run as a file.
-# $BadBase serves a SHA256SUMS the executables do not match.
+# $BadBase serves a SHA256SUMS the installer does not match. Node 18+ is required.
 param([Parameter(Mandatory)] [string]$Base, [Parameter(Mandatory)] [string]$BadBase)
 
 # mgu-install's messages on stderr are not PowerShell errors

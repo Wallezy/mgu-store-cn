@@ -521,6 +521,13 @@ eq(screen('source-install-app', {}, { tokens: [] }).values.appQr.text, '', 'none
 
 // Accounts: Sign in with GitHub only with state.signin; Add token; Add token's status line
 eq(own(screen('accounts')), ['robertn', '0badc0de', 'Sign in with GitHub', 'Add token', 'Back']);
+['settings', 'accounts', 'pick-private', 'login'].forEach((name) => {
+    const cn = screen(name, {}, { github: false, distribution: 'walle-cn' });
+    ok(cn.labels.every((label) => !/GitHub|Accounts|Add token/.test(label)), `${name}: no GitHub actions in CN`);
+});
+const cnKeyboard = screen('type', {}, { github: false, distribution: 'walle-cn' });
+ok(cnKeyboard.labels.indexOf('github.com/') < 0 && cnKeyboard.labels.indexOf('/catalog.json') >= 0,
+    'CN URL keyboard offers a catalog path, not GitHub');
 eq(own(screen('accounts', {}, { signin: false })), ['robertn', '0badc0de', 'Add token', 'Back']);
 eq(screen('accounts').items[3].act, { do: 'add-token' });
 f = screen('accounts-token-refused');

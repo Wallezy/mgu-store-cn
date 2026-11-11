@@ -73,6 +73,7 @@ const https = require('https');
 const { URL } = require('url');
 const certs = require('./certs');
 const tunnel = require('./tunnel');
+const cnSources = require('./cn_sources');
 
 const MAX_REDIRECTS = 5;
 // a network that has moved on leaves a connection silent, never reset: these bound each wait
@@ -206,6 +207,10 @@ function connect(job, target, cb) {
 
 function get(job, url, headers, hops, from, finish) {
     const target = new URL(url);
+    if (job.denyGithub && cnSources.isGithubUrl(url)) {
+        finish({ error: 'GitHub downloads are disabled in the CN distribution' });
+        return;
+    }
     if (target.protocol !== 'https:') {
         finish({ error: `refusing ${target.protocol} URL` });
         return;

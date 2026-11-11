@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The CN updater's `github: false` capability hides GitHub accounts, token entry, sign-in and repository discovery in both UI modes. Source entry accepts HTTPS catalogs and the drawn keyboard offers `/catalog.json`. An updater without the capability retains its supported UI.
+
 ## 0.9.35
 
 No changes.

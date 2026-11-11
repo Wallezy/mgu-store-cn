@@ -6682,7 +6682,8 @@ function mguInstallTerminal(args, opts, answer, file) {
     const log = path.join(fs.mkdtempSync(path.join(T, 'ssh-')), 'log');
     fs.writeFileSync(log, '');
     const env = Object.assign({}, process.env, { PATH: `${opts.bin.bin}:${process.env.PATH}`, FAKE_SSH_LOG: log,
-        FAKE_SSH_ENV: opts.bin.envFile, MGU_INSTALL_GITHUB_API: opts.api, FAKE_GH_TOKEN: '' }, opts.env || {});
+        FAKE_SSH_ENV: opts.bin.envFile, MGU_INSTALL_GITHUB_API: opts.api,
+        MGU_INSTALL_CATALOG: `${opts.api}/catalog.json`, FAKE_GH_TOKEN: '' }, opts.env || {});
     if (!(opts.env && 'CI' in opts.env)) {
         delete env.CI;
     }
@@ -6698,7 +6699,8 @@ function mguInstall(args, opts) {
     const log = path.join(fs.mkdtempSync(path.join(T, 'ssh-')), 'log');
     fs.writeFileSync(log, '');
     const env = Object.assign({}, process.env, { PATH: `${opts.bin.bin}:${process.env.PATH}`, FAKE_SSH_LOG: log,
-        FAKE_SSH_ENV: opts.bin.envFile, MGU_INSTALL_GITHUB_API: opts.api, FAKE_GH_TOKEN: '' }, opts.env || {});
+        FAKE_SSH_ENV: opts.bin.envFile, MGU_INSTALL_GITHUB_API: opts.api,
+        MGU_INSTALL_CATALOG: `${opts.api}/catalog.json`, FAKE_GH_TOKEN: '' }, opts.env || {});
     // stdin: the script itself on stdin (node -), with no terminal; MGU_TEST_INSTALL_EXE: a standalone executable of it
     const r = opts.stdin ? cp.spawnSync(process.execPath, ['-'].concat(args), { encoding: 'utf8', env, input: fs.readFileSync(MGU_INSTALL), detached: true }) :
         process.env.MGU_TEST_INSTALL_EXE ? cp.spawnSync(process.env.MGU_TEST_INSTALL_EXE, args, { encoding: 'utf8', env, input: opts.input || '' }) :
@@ -6752,7 +6754,7 @@ function testMguInstallCoding() {
     }
 }
 
-/* first-install and token against a fake root, the release from the stand-in GitHub. */
+/* first-install and token against a fake root and the public CN-style catalog. */
 function testMguInstall() {
     const gh = fakeGithub({ files: [], repos: {} });
     try {
@@ -6764,8 +6766,7 @@ function testMguInstall() {
         writeCoding(root, 0x09);
         const bin = installBin(root);
         const opts = { bin, api: gh.api };
-        let r = mguInstall(['first-install', '--host', '10.0.0.9', '--token', '--no-uplink', '--no-renderer'],
-            Object.assign({ input: `${TOKEN}\n` }, opts));
+        let r = mguInstall(['first-install', '--host', '10.0.0.9', '--no-uplink', '--no-renderer'], opts);
         const st = r.status === 0 ? root.status() : { components: [] };
         const has = (id) => st.components.some((x) => x.id === id);
         check('mgu-install first-install --no-uplink --no-renderer: the release\'s tools and the Store, built on the unit, without the two',
@@ -6774,19 +6775,19 @@ function testMguInstall() {
         check('mgu-install first-install: the deploy tool is the release\'s, installed from its own files',
             fs.readlinkSync(root.p('var/opt/mgu-deploy/current')) === `versions/${VERSION}` &&
             fs.readFileSync(root.p(`var/opt/mgu-deploy/versions/${VERSION}/mgu-deploy.js`)).equals(fs.readFileSync(UNIT_JS)));
-        check('mgu-install first-install: seeds the sources and adds the token, root\'s alone',
-            JSON.parse(fs.readFileSync(root.p('var/opt/mgu-updater/sources.json'), 'utf8')).sources[0].repo === STORE_REPO &&
+        check('mgu-install first-install: seeds the sources without adding credentials, root\'s alone',
+            JSON.parse(fs.readFileSync(root.p('var/opt/mgu-updater/sources.json'), 'utf8')).sources[0].url ===
+                'https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json' &&
             mode(root.p('var/opt/mgu-updater/sources.json')) === 0o600 &&
-            Object.values(tokenTexts(root)).join() === TOKEN);
+            Object.values(tokenTexts(root)).length === 0);
         check('mgu-install first-install: ends saying a restart finishes setup while the updater is not running; with no terminal, no question',
             r.stdout.endsWith('\nRestart the head unit to finish setup.\n') && !r.out.includes('[y/N]') && !nsmCalls(bin).length, r.out.slice(-500));
-        check('mgu-install first-install: the token is in no output and no ssh argument; it went on stdin to updater-token',
-            !r.out.includes(TOKEN) && r.calls.every((a) => !a.join(' ').includes(TOKEN)) &&
-            r.calls.some((a) => / updater-token( |$)/.test(a[a.length - 1])), r.calls.map((a) => a[a.length - 1]).join('\n'));
+        check('mgu-install first-install: no credential operation is sent',
+            r.calls.every((a) => !a.join(' ').includes('updater-token')), r.out);
         const reqs = gh.requests();
-        check('mgu-install first-install: anonymous first, then the token, to the API host only; never to the host a download redirects to',
-            reqs[0].path === `/repos/${STORE_REPO}` && reqs[0].auth === null && reqs[1].auth === `Bearer ${TOKEN}` &&
-            reqs.filter((x) => x.path.startsWith('/blob/')).length === 5 && reqs.filter((x) => x.path.startsWith('/blob/')).every((x) => x.auth === null),
+        check('mgu-install first-install: the CN catalog and artifacts need no GitHub request or token',
+            reqs[0].path === '/catalog.json' && reqs.filter((x) => x.path.startsWith('/blob/')).length === 4 &&
+            reqs.every((x) => x.auth === null && !x.path.startsWith('/repos/')),
             JSON.stringify(reqs));
         check('mgu-install first-install: ssh to the given host as root on port 22, with ssh-rsa allowed for the unit\'s sshd and its host key neither asked about nor kept',
             r.calls.every((a) => a.includes('root@10.0.0.9') && a[0] === '-p' && a[1] === '22' && a.includes('HostKeyAlgorithms=+ssh-rsa') &&
@@ -6806,7 +6807,8 @@ function testMguInstall() {
         check('mgu-install first-install again: changes nothing installed, and says setup is done', r.status === 0 &&
             r.out.includes('already installed') && !r.out.includes('built robertn_store') && r.out.includes('updater sources kept') &&
             r.stdout.endsWith('Setup is done: the Store installs and updates everything from here on.\n') &&
-            gh.requests()[1].auth === `Bearer ${TOKEN}` && !r.calls.some((a) => / updater-token/.test(a[a.length - 1])), r.out.slice(-2000));
+            gh.requests().every((x) => x.auth === null && !x.path.startsWith('/repos/')) &&
+            !r.calls.some((a) => / updater-token/.test(a[a.length - 1])), r.out.slice(-2000));
         r = mguInstall(['first-install', '--host', '10.0.0.9'], Object.assign({ env: { FAKE_GH_TOKEN: TOKEN } }, opts));
         check('mgu-install first-install: installs the renderer and the uplink by default, which start at the next start', r.status === 0 &&
             ['mgu-uplink', 'mgu-render'].every((id) => root.status().components.some((x) => x.id === id)) &&
@@ -6857,10 +6859,10 @@ function testMguInstall() {
             `exec '${process.execPath}' - first-install --host 10.0.0.9 < '${MGU_INSTALL}'`] }), 'y');
         check('mgu-install from stdin at a terminal: asks at the terminal; y restarts', r.status === 0 && r.out.includes(QUESTION) &&
             r.out.endsWith('\nRestarting the head unit.\n') && nsmCalls(bin).length === 5, r.out.slice(-800));
-        // install.sh through curl | sh: it gives the executable the terminal, where the question is answered
+        // install.sh through curl | sh: it gives Node the terminal, where the question is answered
         const dl = fs.mkdtempSync(path.join(T, 'dl-'));
-        const exe = `mgu-install-linux-${os.arch()}.gz`;
-        fs.writeFileSync(path.join(dl, exe), zlib.gzipSync(`#!/bin/sh\nexec '${process.execPath}' '${MGU_INSTALL}' "$@"\n`));
+        const exe = 'mgu-install.js';
+        fs.copyFileSync(MGU_INSTALL, path.join(dl, exe));
         fs.writeFileSync(path.join(dl, 'SHA256SUMS'), `${sha256(fs.readFileSync(path.join(dl, exe)))}  ${exe}\n`);
         r = mguInstallTerminal(null, Object.assign({}, tOpts, { env: { FAKE_GH_TOKEN: TOKEN, MGU_INSTALL_DOWNLOAD: `file://${dl}` },
             command: ['sh', '-c', `cat '${path.join(DEPLOY, 'install.sh')}' | sh -s -- first-install --host 10.0.0.9`] }), 'y');
@@ -6887,10 +6889,10 @@ function testMguInstall() {
         r = mguInstall(['first-install', '--host', '10.0.0.9'], Object.assign({ env: { FAKE_GH_TOKEN: TOKEN } }, opts));
         check('mgu-install first-install: a catalog without the renderer installs the rest, saying so', r.status === 0 &&
             r.out.includes('the catalog has no mgu-render; installing without it'), r.out.slice(-2000));
-        gh.set(config);
+        gh.set({ files: rel.files, repos: {} });
         r = mguInstall(['first-install', '--host', '10.0.0.9'], opts);
-        check('mgu-install first-install: a private release without a token is refused, the unit only read', r.status === 1 &&
-            r.stderr.includes('no access') && r.calls.length === 1 && r.calls[0][r.calls[0].length - 1].includes('rawcodingdata'), r.out);
+        check('mgu-install first-install: an unavailable CN catalog is refused, the unit only read', r.status === 1 &&
+            r.stderr.includes('404') && r.calls.length === 1 && r.calls[0][r.calls[0].length - 1].includes('rawcodingdata'), r.out);
         const bad = JSON.parse(fs.readFileSync(rel.files[rel.catalogIndex], 'utf8'));
         bad.components[1].artifact.sha256 = '0'.repeat(64);
         const badFile = path.join(rel.dir, 'bad-catalog.json');
@@ -6900,54 +6902,23 @@ function testMguInstall() {
         check('mgu-install first-install: an artifact that does not match its catalog stops it before anything is sent', r.status === 1 &&
             r.stderr.includes('sha256 does not match') && r.calls.length === 1 && r.calls[0][r.calls[0].length - 1].includes('rawcodingdata'), r.out);
         gh.set(config);
-        // token
-        const other = `${TOKEN}x`;
-        r = mguInstall(['token', '--host', '10.0.0.9'], Object.assign({ input: other }, opts));
-        check('mgu-install token: adds a token from stdin through updater-token; the running updater reads its sources again', r.status === 0 &&
-            Object.values(tokenTexts(root)).sort().join() === [TOKEN, other].sort().join() && !r.out.includes(other) &&
-            /^sh \/var\/opt\/mgu-deploy\/mgu-deploy\.sh updater-token && /.test(r.calls[0][r.calls[0].length - 1]) &&
-            r.calls[0][r.calls[0].length - 1].includes('updater.js check') && r.calls.every((a) => !a.join(' ').includes(other)), r.out);
-        r = mguInstall(['token', '--host', '10.0.0.9', '--list'], opts);
-        check('mgu-install token --list: updater-token --list on the unit', r.calls.length === 1 &&
-            r.calls[0][r.calls[0].length - 1].endsWith('sh /var/opt/mgu-deploy/mgu-deploy.sh updater-token --list'), JSON.stringify(r.calls));
-        r = mguInstall(['token', '--host', '10.0.0.9', '--list', '--ssh-opt', 'StrictHostKeyChecking=yes'], opts);
-        check('mgu-install: an owner\'s StrictHostKeyChecking comes before the tool\'s, so ssh takes the owner\'s',
-            r.calls.length === 1 && r.calls[0].indexOf('StrictHostKeyChecking=yes') >= 0 &&
-            r.calls[0].indexOf('StrictHostKeyChecking=yes') < r.calls[0].indexOf('StrictHostKeyChecking=no'), JSON.stringify(r.calls));
-        r = mguInstall(['token', '--host', '10.0.0.9', '--list', '--json'], opts);
-        const listed = JSON.parse(r.stdout);
-        const otherId = Object.keys(tokenTexts(root)).find((id) => tokenTexts(root)[id] === other);
-        check('mgu-install token --list --json: the tokens as JSON, no token text', r.status === 0 &&
-            r.calls[0][r.calls[0].length - 1].endsWith('sh /var/opt/mgu-deploy/mgu-deploy.sh updater-token --list --json') &&
-            listed.length === 2 && listed.some((t) => t.id === otherId) && !r.out.includes(TOKEN), r.out);
-        const deployComponent = root.p('var/opt/mgu-deploy/current/component.json');
-        const deployOwn = fs.readFileSync(deployComponent, 'utf8');
-        fs.writeFileSync(deployComponent, JSON.stringify(Object.assign(JSON.parse(deployOwn), { version: '0.2.2' })));
-        r = mguInstall(['token', '--host', '10.0.0.9', '--remove', otherId], opts);
-        check('mgu-install token --remove: a deploy tool older than 0.2.3 is refused, every token kept', r.status === 2 &&
-            r.stderr.includes('older than 0.2.3') && Object.keys(tokenTexts(root)).length === 2, r.out);
-        fs.writeFileSync(deployComponent, deployOwn);
-        r = mguInstall(['token', '--host', '10.0.0.9', '--remove', otherId], opts);
-        check('mgu-install token --remove <id>: updater-token --remove <id> on the unit', r.status === 0 && r.calls.length === 1 &&
-            r.calls[0][r.calls[0].length - 1].endsWith(`sh /var/opt/mgu-deploy/mgu-deploy.sh updater-token --remove '${otherId}'`) &&
-            !tokenTexts(root)[otherId] && Object.keys(tokenTexts(root)).length === 1, JSON.stringify(r.calls));
-        const jsonAlone = mguInstall(['token', '--json'], opts);
-        const notHex = mguInstall(['token', '--remove', 't-1a2b'], opts);
-        check('mgu-install token: --json without --list, or an id that is not one, is refused, nothing sent',
-            jsonAlone.status === 2 && notHex.status === 2 && !jsonAlone.calls.length && !notHex.calls.length, `${jsonAlone.out}${notHex.out}`);
-        r = mguInstall(['token', '--remove', "x'; rm -rf /"], opts);
-        const empty = mguInstall(['token'], opts);
-        const argv = mguInstall(['token', TOKEN], opts);
-        check('mgu-install token: a bad id, no token, or a token as an argument is refused, nothing sent',
-            r.status === 2 && empty.status === 2 && empty.stderr.includes('no token given') && argv.status === 2 &&
-            !r.calls.length && !empty.calls.length && !argv.calls.length, `${r.out}${empty.out}${argv.out}`);
+        for (const args of [['token'], ['token', '--list'], ['token', '--remove', '1234abcd'],
+            ['first-install', '--token']]) {
+            r = mguInstall(args, opts);
+            check(`mgu-install CN ${args.join(' ')}: refused before SSH`, r.status === 2 &&
+                r.stderr.includes('not supported by the CN installer') && !r.calls.length, r.out);
+        }
+        r = mguInstall(['status', '--host', '10.0.0.9', '--ssh-opt', 'StrictHostKeyChecking=yes'], opts);
+        check('mgu-install: owner host-key options take precedence', r.calls.length > 0 &&
+            r.calls[0].indexOf('StrictHostKeyChecking=yes') < r.calls[0].indexOf('StrictHostKeyChecking=no'), r.out);
         r = mguInstall(['first-install', '--host', '10.0.0.9', '--source', 'x'], opts);
         check('mgu-install: an unknown option is a usage error', r.status === 2 && r.stderr.includes('unknown option --source'), r.out);
         check('mgu-install: seeds the same sources as deploy/hu', JSON.stringify(require(MGU_INSTALL).SOURCES) ===
             JSON.stringify(readJson(path.join(DEPLOY, 'sources.json'))));
-        const defaults = /^default_sources = (.*)$/m.exec(fs.readFileSync(path.join(DEPLOY, '..', 'native', 'mgu-updater', 'updater.conf'), 'utf8'));
-        check('sources: the installers seed the updater\'s default sources', !!defaults && JSON.stringify(defaults[1].split(' ')) ===
-            JSON.stringify(readJson(path.join(DEPLOY, 'sources.json')).sources.filter((x) => !x.builtin).map((x) => `${x.repo}:${x.channel}`)),
+        const defaults = /^default_sources =[ \t]*(.*)$/m.exec(fs.readFileSync(path.join(DEPLOY, '..', 'native', 'mgu-updater', 'updater.conf'), 'utf8'));
+        check('sources: CN installers seed HTTPS sources without additional GitHub defaults', !!defaults && defaults[1] === '' &&
+            readJson(path.join(DEPLOY, 'sources.json')).sources.every((x) => x.type === 'https') &&
+            /^distribution_channel = walle-cn$/m.test(fs.readFileSync(path.join(DEPLOY, '..', 'native', 'mgu-updater', 'updater.conf'), 'utf8')),
             defaults && defaults[1]);
 
         // the one-liner: the script on stdin (curl ... | node - first-install), the unit found on its own
@@ -6961,7 +6932,7 @@ function testMguInstall() {
             r.calls.every((a) => a.join(' ').startsWith(`-p ${port} `) && a.includes('root@127.0.0.1')), `${r.out.slice(-2000)}\n${JSON.stringify(r.calls[0])}`);
         r = mguInstall(['token'], one);
         check('mgu-install from stdin without a terminal: token is refused before connecting, saying how to run it',
-            r.status === 2 && r.stderr.includes('no terminal') && !r.calls.length, r.out);
+            r.status === 2 && r.stderr.includes('not supported by the CN installer') && !r.calls.length, r.out);
         r = mguInstall(['first-install'], Object.assign({}, one, { env: { FAKE_GH_TOKEN: TOKEN, MGU_INSTALL_HOTSPOT: '127.0.0.1:9' } }));
         check('mgu-install: no unit answering SSH stops before any download or ssh, saying what to check',
             r.status === 1 && !r.calls.length && r.stderr.includes('no head unit answered SSH') && r.stderr.includes('--host'), r.out);
@@ -7020,14 +6991,13 @@ function testMguInstallUsb() {
         fs.mkdirSync(stick);
         const bin = installBin(null);
         const opts = { bin, api: gh.api, env: { FAKE_GH_TOKEN: TOKEN } };
-        let r = mguInstall(['usb-repo', stick, `github:${STORE_REPO}`, 'github:third/rel', pub, co].concat(pkgs), opts);
+        let r = mguInstall(['usb-repo', stick, `${gh.api}/catalog.json`, pub, co].concat(pkgs), opts);
         const repo = path.join(stick, 'mgu-repo');
         check('mgu-install usb-repo: one folder per input, package files together in local/', r.status === 0 &&
-            fs.readdirSync(repo).sort().join() === 'checkout,dir-publish,local,mgu-store,rel', `${r.out}\n${fs.existsSync(repo) && fs.readdirSync(repo)}`);
+            fs.readdirSync(repo).sort().join() === 'checkout,dir-publish,local,mgu-store', `${r.out}\n${fs.existsSync(repo) && fs.readdirSync(repo)}`);
         const reqs = gh.requests();
-        check('mgu-install usb-repo: the GitHub CLI\'s token for the private repo, only to the API host', reqs.some((x) => x.auth === `Bearer ${TOKEN}`) &&
-            reqs.filter((x) => x.path.startsWith('/blob/')).every((x) => x.auth === null) &&
-            reqs.filter((x) => x.path.startsWith('/repos/third/rel')).every((x) => x.auth === null), JSON.stringify(reqs));
+        check('mgu-install usb-repo: the HTTPS catalog never asks for GitHub authentication',
+            reqs.every((x) => x.auth === null && !x.path.startsWith('/repos/')), JSON.stringify(reqs));
         const read = () => {
             const x = cp.spawnSync(UNIT_NODE, [path.join(HERE, 'stick_read.js'), media], { encoding: 'utf8' });
             try {
@@ -7037,30 +7007,24 @@ function testMguInstallUsb() {
             }
         };
         // what an interrupted run leaves at the stick's root is no source
-        write(path.join(stick, '.mgu-repo-rel.partial', 'catalog.json'), fs.readFileSync(path.join(repo, 'rel', 'catalog.json')));
+        write(path.join(stick, '.mgu-repo-store.partial', 'catalog.json'), fs.readFileSync(path.join(repo, 'mgu-store', 'catalog.json')));
         let seen = read();
         const src = (name) => seen[`usb:MY STICK/mgu-repo/${name}`] || {};
         const ids = (name) => (src(name).components || []).map((c) => `${c.id}@${c.version}${c.build ? `:${c.build}` : ''}`).sort().join(' ');
         const allOk = Object.keys(seen).every((k) => seen[k].components && seen[k].components.every((c) => c.ok === true) && !seen[k].skipped.length);
         check('mgu-install usb-repo: the updater reads every folder, and every artifact matches its listed size and sha256 (unit Node)',
-            Object.keys(seen).length === 5 && allOk, JSON.stringify(seen));
+            Object.keys(seen).length === 4 && allOk, JSON.stringify(seen));
         check('mgu-install usb-repo: a published catalog keeps its schema-2 fields',
             ids('mgu-store') === `app-privacy@${rel.entries[1].version} mgu-deploy@${VERSION} mgu-render@0.1.0 mgu-updater@0.2.0 mgu-uplink@0.4.0 robertn_store@${rel.entries[4].version}:unit`,
             ids('mgu-store'));
-        const relCat = JSON.parse(fs.readFileSync(path.join(repo, 'rel', 'catalog.json'), 'utf8'));
-        check('mgu-install usb-repo: a releases-mode repo gets a catalog: the newest of each id, the .tgz over the .mgu, titles from mgu-store.json',
-            ids('rel') === 'mgu_only@0.1.0 rel_app@1.1.0' && relCat.components.find((c) => c.id === 'rel_app').title === 'Release App' &&
-            relCat.components.find((c) => c.id === 'mgu_only').artifact.url === 'mgu_only@0.1.0.mgu' &&
-            relCat.components.every((c) => c.uninstallable === true), JSON.stringify(relCat));
         check('mgu-install usb-repo: a dir: publish and a checkout (the updater builds it as a repo tree, node_modules left out)',
             ids('dir-publish') === 'dir_app@1.0.0' && src('checkout').mode === 'repo' && ids('checkout') === 'co-tool@0.1.0' &&
             !fs.existsSync(path.join(repo, 'checkout', 'node_modules')), JSON.stringify([src('dir-publish'), src('checkout')]));
         const marker = (name) => (fs.existsSync(path.join(repo, name, 'mgu-copy.json')) ?
             JSON.parse(fs.readFileSync(path.join(repo, name, 'mgu-copy.json'), 'utf8')).copyOf : null);
-        check('mgu-install usb-repo: a published source\'s folder, and a clone of a GitHub repository, names the source it is a copy of; the updater reads it',
-            marker('mgu-store') === `github:${STORE_REPO}` && marker('rel') === 'github:third/rel' && src('mgu-store').copyOf === `github:${STORE_REPO}` &&
-            marker('checkout') === 'github:cauliflowermossgrape/idrive7-apps' && src('checkout').copyOf === marker('checkout') &&
-            [marker('dir-publish'), marker('local')].every((m) => m === null), JSON.stringify([marker('mgu-store'), src('mgu-store').copyOf, marker('checkout')]));
+        check('mgu-install usb-repo: the HTTPS source keeps its origin; a checkout adds no GitHub alias',
+            marker('mgu-store') === `${gh.api}/catalog.json` && src('mgu-store').copyOf === `${gh.api}/catalog.json` &&
+            [marker('checkout'), marker('dir-publish'), marker('local')].every((m) => m === null));
         check('mgu-install usb-repo: package files by their content: an app, a .mgu, a tool kit and a source package built on the unit',
             ids('local') === 'loose-tool@0.3.0 loose_app@1.0.0 mgu_app@2.0.0 robertn_demo@1.0.0:unit', ids('local'));
         // again: a newer and an older package; the newer replaces, the older leaves the newer
@@ -7094,7 +7058,7 @@ function testMguInstallUsb() {
             r.status === 2 && r.stderr.includes('root-service') && r2.status === 1 && /bytes, the source lists|sha256/.test(r2.stderr) &&
             treeHash(stick).hash === before, `${r.out}\n${r2.out}`);
         r = mguInstall(['usb-repo', stick, `github:${STORE_REPO}`], Object.assign({}, opts, { env: { FAKE_GH_TOKEN: '' } }));
-        check('mgu-install usb-repo: a private repo with no token is refused, its folder kept', r.status === 1 && r.stderr.includes('no access') &&
+        check('mgu-install usb-repo: GitHub imports are refused, its folder kept', r.status === 2 && r.stderr.includes('not supported by the CN installer') &&
             treeHash(stick).hash === before, r.out);
     } finally {
         gh.stop();
@@ -7151,8 +7115,8 @@ function testMguInstallFrom() {
             r.status === 1 && r.stderr.includes(`${path.resolve(nodeploy)}: the catalog has no mgu-deploy`) &&
             !r.stderr.includes(`${STORE_REPO}: the catalog`) && r.calls.length === 1 &&
             r.calls[0][r.calls[0].length - 1].includes('rawcodingdata'), r.out);
-        r = mguInstall(['token', '--from', from, '--host', '10.0.0.9'], opts);
-        check('mgu-install: --from goes with first-install only', r.status === 2 &&
+        r = mguInstall(['status', '--from', from, '--host', '10.0.0.9'], opts);
+        check('mgu-install: --from does not go with status', r.status === 2 &&
             r.stderr.includes('unknown option --from') && !r.calls.length, r.out);
         r = mguInstall(['help'], opts);
         check('mgu-install help: names --from', r.status === 0 && r.stdout.includes('--from <folder>'), r.out);
@@ -7165,8 +7129,8 @@ function testMguInstallFrom() {
  * one argument, the unit gets POSIX ones, names on the stick are valid there. */
 function testMguInstallPaths() {
     const mi = require(MGU_INSTALL);
-    const o = mi.parse(['token', '--host', '172.16.222.97', '--identity', 'C:\\Users\\Me Here\\.ssh\\id_rsa', '--ssh-opt', 'StrictHostKeyChecking=no']);
-    const args = mi.sshArgs(o, 'sh /var/opt/mgu-deploy/mgu-deploy.sh updater-token --list');
+    const o = mi.parse(['status', '--host', '172.16.222.97', '--identity', 'C:\\Users\\Me Here\\.ssh\\id_rsa', '--ssh-opt', 'StrictHostKeyChecking=no']);
+    const args = mi.sshArgs(o, 'sh /var/opt/mgu-deploy/mgu-deploy.sh status --read-only');
     check('mgu-install paths: a Windows key path is one ssh argument, the owner\'s options first, the remote command last',
         args[args.indexOf('-i') + 1] === 'C:\\Users\\Me Here\\.ssh\\id_rsa' && args.indexOf('StrictHostKeyChecking=no') < args.indexOf('-i') &&
         args[args.length - 2] === 'root@172.16.222.97' && args[args.length - 1].startsWith('sh /var/opt/'), JSON.stringify(args));

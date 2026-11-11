@@ -6,8 +6,8 @@
  *
  *   node prompt_test.js <powershell.exe or pwsh.exe> <download base URL> <folder with the fake ssh.exe>
  *
- * The download base serves the installer release's files (SHA256SUMS and
- * the executables); the fake ssh.exe (fake_ssh.cs) plays a head unit that
+ * The download base serves SHA256SUMS and mgu-install.js; Node 18+ is
+ * installed. The fake ssh.exe (fake_ssh.cs) plays a head unit that
  * needs a restart and has a read-only status. Runs as a file and as the
  * README's one-liner.
  */

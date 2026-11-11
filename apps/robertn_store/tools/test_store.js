@@ -1933,7 +1933,42 @@ function runEntryPoint() {
     });
 }
 
-run().then(runWidgetsExtra).then(runLanguage).then(runAbsentContext).then(runClusterClock).then(runEntryPoint).then(runDrawn).then(runTiming).then(() => {
+function runCn() {
+    const cn = Object.assign({}, ST, { github: false, distribution: 'walle-cn', signin: true,
+        signinApp: { installUrl: 'https://github.com/apps/mgu-store/installations/new' } });
+    reset();
+    app._forgetWritten();
+    app._client.emit('state', cn);
+    return tick().then(() => {
+        eq(last(/storeSourceAccounts\.Visible/), 'storeSourceAccounts.Visible=0', 'CN hides Accounts despite retained old token state');
+        eq(last(/storeAccountSignIn\.Visible/), 'storeAccountSignIn.Visible=0', 'CN hides GitHub sign-in');
+        eq(last(/storeAccountAddToken\.Visible/), 'storeAccountAddToken.Visible=0', 'CN hides token entry');
+        app._signIn();
+        app._addToken();
+        app._startPick('owner/repo');
+        ['login-cancel', 'token-remove', 'source-probe'].forEach((op) => app._privileged({ op, id: 'old', repo: 'owner/repo' }));
+        app._sendSource({ type: 'github', repo: 'owner/repo' });
+        eq(sent.length, 0, 'CN stale controls send no GitHub operations');
+        eq(spellerTitles.length, 0, 'CN does not open a token speller');
+        app._sendSource({ type: 'https', url: 'https://mgu.walle.pw/third/catalog.json' });
+        eq(sent.map(secretless), [{ op: 'source-add', type: 'https', url: 'https://mgu.walle.pw/third/catalog.json' }],
+            'CN still supports an HTTPS catalog');
+        reset();
+        spellerAnswers.push('owner/repo');
+        app._addSource();
+        return tick(40);
+    }).then(() => {
+        eq(sent.length, 0, 'CN typed repo does not probe GitHub');
+        eq(last(/storeSourcesStatus\.0\.Text/), 'storeSourcesStatus.0.Text=Add source failed: https://host/catalog.json');
+        app._client.emit('state', ST);
+        return tick();
+    }).then(() => {
+        eq(last(/storeSourceAccounts\.Visible/), 'storeSourceAccounts.Visible=1',
+            'an updater without the capability keeps upstream behavior');
+    });
+}
+
+run().then(runWidgetsExtra).then(runCn).then(runLanguage).then(runAbsentContext).then(runClusterClock).then(runEntryPoint).then(runDrawn).then(runTiming).then(() => {
     cleanUp();
     console.log(`store: ${checks} checks pass`);
     process.exit(0);

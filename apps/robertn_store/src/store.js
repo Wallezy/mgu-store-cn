@@ -72,7 +72,7 @@ const { qrPng } = require('./qr.js');
 const { spell } = require('./speller.js');
 const { Drawn, DEPTHS } = require('./store_drawn.js');
 const { typeKey, wifiOf, proxyOf } = require('./store_ui.js');
-const { PHASE, percent, rowState, rowAction, groupState, statusLine, sourceLabel, sourceState,
+const { githubEnabled, PHASE, percent, rowState, rowAction, groupState, statusLine, sourceLabel, sourceState,
     sourcesState, sourceActions, sourceChannel, sourceAccount, tokenLabel, tokenState, tokenSources, accountsState,
     loginStatus, loginCode, phoneState, phoneAddress, parseSource, pickOptions, probeStatus, neededBy, sourcesMessage, tokenMessage,
     removable, requiredAlone, undoable, withSources, listed, localized, proxyUrlError, setClusterTime } = require('./store_view.js');
@@ -278,6 +278,13 @@ class Store extends OnlineApp {
             this._connected = true;
             this._stRaw = st;
             this._st = localized(st);
+            if (!githubEnabled(st)) {
+                this._endPick();
+                if (this._tokenAdding) clearTimeout(this._tokenAdding.timer);
+                this._tokenAdding = null;
+                this._accountsNote = { text: '', error: false };
+                this._login = { waiting: false, refusal: null };
+            }
             this._tokenAdded(st);
             this._reprobe();
             this._render();
@@ -546,7 +553,7 @@ class Store extends OnlineApp {
         this._bind(C.sourceAdd, () => this._addSource());
         this._bind(C.sourcePhone, () => this._openState(S.phone));
         this._bind(C.srcRemove, () => this._openState(S.sourceRemove));
-        this._bind(C.sourceAccounts, () => this._openState(S.accounts));
+        this._bind(C.sourceAccounts, () => { if (githubEnabled(this._st)) this._openState(S.accounts); });
         this._bind(C.accountList, (row) => this._onAccount(row));
         this._bind(C.accountSignIn, () => this._signIn());
         this._bind(C.accountAddToken, () => this._addToken());
@@ -863,6 +870,9 @@ class Store extends OnlineApp {
         if (this._shutdownPromise) {
             return;
         }
+        if (!githubEnabled(this._st) && [S.accounts, S.accountRemove, S.pick, S.login].indexOf(name) >= 0) {
+            return;
+        }
         this._render();
         Promise.resolve(this.rhmiApplication.openState(name))
             .catch((err) => logger.warn(`openState ${name} failed: ${err && err.message}`));
@@ -884,6 +894,10 @@ class Store extends OnlineApp {
     /* Sends a request that needs the updater's secret; without the secret
      * file nothing is sent. */
     _privileged(req) {
+        if (!githubEnabled(this._st) && (['token-add', 'token-remove', 'login-start', 'login-cancel', 'source-probe'].indexOf(req.op) >= 0 ||
+            (req.op === 'source-add' && (req.type !== 'https' || !parseSource(req.url, false))))) {
+            return false;
+        }
         const secret = readSecret();
         if (!secret) {
             logger.warn(`${req.op}: no updater secret in ${SECRET_FILE}`);
@@ -959,7 +973,7 @@ class Store extends OnlineApp {
     }
 
     _token(id) {
-        const tokens = this._connected && this._st && this._st.tokens;
+        const tokens = this._connected && githubEnabled(this._st) && this._st && this._st.tokens;
         return (Array.isArray(tokens) && id && tokens.find((t) => t.id === id)) || null;
     }
 
@@ -1028,6 +1042,7 @@ class Store extends OnlineApp {
     }
 
     _signIn() {
+        if (!githubEnabled(this._st)) return;
         this._login = { waiting: true, refusal: null };
         if (this._privileged({ op: 'login-start' })) {
             logger.info('GitHub sign-in');
@@ -1202,13 +1217,15 @@ class Store extends OnlineApp {
             if (!typed) {
                 return;
             }
-            const source = parseSource(typed);
+            const github = githubEnabled(this._st);
+            const source = parseSource(typed, github);
             if (source && source.type === 'github' && !source.channel) {
                 this._startPick(source.repo);
             } else if (source) {
                 this._sendSource(source);
             } else {
-                this._note({ kind: 'invalid-source', text: typed });
+                this._note(github ? { kind: 'invalid-source', text: typed } :
+                    { kind: 'refused', op: 'source-add', error: 'https://host/catalog.json' });
             }
         });
     }
@@ -1216,6 +1233,7 @@ class Store extends OnlineApp {
     /* Add token: the speller's text goes to the updater, which asks GitHub
      * whose it is before it stores it; the status line says what came of it. */
     _addToken() {
+        if (!githubEnabled(this._st)) return;
         this._endTokenAdd(null);
         this._spell(tr("GitHub token"), (m) => this._accountNote(m), { secret: true }).then((text) => {
             const token = (text || '').trim();
@@ -1272,6 +1290,7 @@ class Store extends OnlineApp {
      * FOCUS_BACK_MS after it closed): a page opened while the speller is
      * still closing is closed again by the focus coming back below it. */
     _startPick(repo) {
+        if (!githubEnabled(this._st)) return;
         this._endPick();
         const pick = { repo, probe: null, tokens: '', back: false, open: false };
         this._awaitFocus(pick);
@@ -1572,15 +1591,16 @@ class Store extends OnlineApp {
         this._show(C.sourceAdd, !!sources);
         this._show(C.sourcePhone, !!web);
         // an updater that reports no tokens hides Accounts
-        const tokens = connected && Array.isArray(st.tokens) ? st.tokens : null;
+        const tokens = connected && githubEnabled(st) && Array.isArray(st.tokens) ? st.tokens : null;
         if (tokens) {
             this._set(C.sourceAccounts, 'Text2ndCol', accountsState(tokens), 'Text');
         }
         this._show(C.sourceAccounts, !!tokens);
         this._renderList(C.accountList, (tokens || []).map((t) => [tokenLabel(t), tokenState(t)]));
         // Sign in with GitHub only with the updater's GitHub App (state.signin)
-        this._show(C.accountSignIn, connected && st.signin === true);
+        this._show(C.accountSignIn, connected && githubEnabled(st) && st.signin === true);
         this._show(C.accountAddToken, !!tokens);
+        this._show(C.accountRemoveConfirm, !!tokens);
         this._text(C.accountsStatus, this._accountsNote.text);
         this._rows.token = (tokens || []).map((t) => t.id);
         const removing = this._token(this._tokenId);
@@ -1588,7 +1608,7 @@ class Store extends OnlineApp {
         this._text(C.accountSources, removing ? tokenSources(removing, sources) : '');
         this._renderSource(this._source(this._sourceId));
         this._renderPick();
-        this._renderLogin(connected ? st.login : null);
+        this._renderLogin(connected && githubEnabled(st) ? st.login : null);
         this._renderPhone(web);
         if (this._drawnUi()) {
             this._drawn.refresh();
@@ -1610,12 +1630,12 @@ class Store extends OnlineApp {
         }
         this._show(C.srcStatus, !!src);
         this._show(C.srcChannel, !!(src && sourceChannel(src)));
-        this._show(C.srcAccount, !!(src && sourceAccount(src)));
+        this._show(C.srcAccount, githubEnabled(this._st) && !!(src && sourceAccount(src)));
         this._show(C.srcComponents, !!src);
         this._text(C.srcError, src && src.error ? String(src.error) : '');
         this._show(C.srcRemove, !!actions.remove);
         // a private repo no account reaches after a sign-in: the GitHub App's install page
-        const app = src && src.status === 'auth-needed' && this._st && this._st.signinApp;
+        const app = githubEnabled(this._st) && src && src.status === 'auth-needed' && this._st && this._st.signinApp;
         const signedIn = Array.isArray(this._st && this._st.tokens) && this._st.tokens.some((t) => !t.rejected);
         const installUrl = app && signedIn && app.installUrl ? String(app.installUrl) : '';
         this._show(C.srcAppLabel, !!installUrl);
@@ -1624,7 +1644,7 @@ class Store extends OnlineApp {
     }
 
     _renderPick() {
-        const pick = this._pick;
+        const pick = githubEnabled(this._st) ? this._pick : null;
         const probe = pick ? pick.probe : null;
         const options = pickOptions(probe);
         const auth = !!probe && probe.status === 'auth-needed';
@@ -1643,6 +1663,7 @@ class Store extends OnlineApp {
      * done. A login the updater reports before it has taken the new one up
      * is an earlier one. */
     _renderLogin(reported) {
+        this._show(C.loginCancel, githubEnabled(this._st));
         if (this._login.waiting && reported && reported.status === 'pending') {
             this._login.waiting = false;
         }
