@@ -8,15 +8,16 @@ approval and does not establish `release-check/cn-integration`.
 
 | Area | Local result |
 | --- | --- |
-| CN installer transport/bootstrap | 20 checks passed, including GitHub commands, imports, direct downloads and redirect refusal |
-| Existing installer compatibility | Final 85 Linux root fixture checks passed; GitHub feature tests now assert refusal |
-| CN snapshot preparation | 19 tests passed, including hashes, icons, source identity, dependency closure/cycles and private evidence exclusion |
+| CN installer transport/bootstrap | 26 checks passed, including GitHub commands, imports, direct downloads and redirect refusal |
+| Existing installer compatibility | 96 Linux root checks passed with the migration guard; targeted first-install rerun including the local-override regression passed 41/41 |
+| CN snapshot preparation | 19 tests passed, including hashes, icons, source identity, dependency closure/cycles, pending test preparation and private evidence exclusion |
 | CN source, identity and network rules | 33 Node 8.16.2 checks passed; six shipped-config checks passed after removing GitHub configuration |
 | Updater compatibility | 614 checks passed; certificate/UID suites passed, proxy 41 and web 23 checks passed |
 | Phone page | Legacy form tests and CN account/source refusal passed |
 | Release destination and exact-commit policy | Passed; wrong repository and missing/failed integration status refused |
-| Windows bootstrap execution | Pending GitHub Actions result |
-| Store UI | CN account/source removal checked in renderer and ID7/ID8 widget fixtures; Store 0.9.36 requires CN-capable updater 0.8.40 |
+| Cross-platform bootstrap | macOS, Linux, Windows x64 and Windows ARM checks passed on source commit `2e918e5`; subsequent installer migration guard has its own checks |
+| Store UI | 293 view, 1161 screen, 342 ID7 flow and 415 ID8 flow checks passed; Store 0.9.36 requires updater 0.8.40 |
+| Clean reproducible builds | Store 0.9.36, updater 0.8.40 and deploy 0.8.11 each built twice from committed sources with identical bytes |
 | Head-unit integration | Not run |
 | Public CN OSS snapshot | Not published or accepted |
 
@@ -28,11 +29,17 @@ MGU_TEST_ONLY=testMguInstall,testMguInstallFrom,testMguInstallCoding,testMguInst
 python3 -m unittest discover -s release/test -p 'test_*.py' -v
 node release/test/cn_distribution_test.js
 sh native/mgu-updater/test/run.sh
+node release/release.js check mgu-updater robertn_store mgu-deploy
 ```
 
 Linux fixtures use a generic Docker environment. They do not emulate BMW HMI,
 MainApp, system startup or real car hardware. The full updater suite runs on
 Node 8.16.2 for compatibility; its test output is distinct from vehicle evidence.
+
+The installer preflight refuses an equal/newer installed updater whose shipped
+channel files differ from the verified CN payload, and refuses a conflicting
+local channel override. It does not downgrade or rewrite the override. Service
+health and a visible tile alone do not establish an active CN channel.
 
 The installer needs a local Node.js 18+ runtime; no standalone executable
 runtime is distributed by the CN bootstrap in this revision.

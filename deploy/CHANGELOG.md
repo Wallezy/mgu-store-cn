@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CN first-install reads updater identity before transfer and refuses a same/newer unverified payload or a local configuration that overrides the CN channel. It does not force a downgrade. Installation completion leaves active-channel and online-update acceptance explicit.
+
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.

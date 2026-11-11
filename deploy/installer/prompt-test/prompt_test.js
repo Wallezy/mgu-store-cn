@@ -42,8 +42,12 @@ function fromFolder(dir) {
     const art = tgz([{ name: 'component.json', data: component, mode: 0o644 }, { name: 'files/mgu-deploy.sh', data: sh, mode: 0o644 }],
         Math.floor(Date.now() / 1000));
     fs.writeFileSync(path.join(dir, 'mgu-deploy@0.0.1.tgz'), art);
+    const updater = require('../../test/cn_updater_fixture').artifact('0.0.1');
+    fs.writeFileSync(path.join(dir, 'mgu-updater@0.0.1.tgz'), updater);
     fs.writeFileSync(path.join(dir, 'catalog.json'), JSON.stringify({ schema: 2, components: [{ id: 'mgu-deploy', kind: 'tool', version: '0.0.1',
-        artifact: { name: 'mgu-deploy@0.0.1.tgz', size: art.length, sha256: sha256(art) } }] }));
+        artifact: { name: 'mgu-deploy@0.0.1.tgz', size: art.length, sha256: sha256(art) } },
+    { id: 'mgu-updater', kind: 'tool', version: '0.0.1',
+        artifact: { name: 'mgu-updater@0.0.1.tgz', size: updater.length, sha256: sha256(updater) } }] }));
 }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-prompt-test-'));

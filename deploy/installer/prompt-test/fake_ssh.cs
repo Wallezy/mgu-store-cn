@@ -20,6 +20,8 @@ static class FakeSsh {
         }
         if (remote.Contains("rawcodingdata")) {
             Console.WriteLine("ok");
+        } else if (remote.Contains("mgu-cn-updater-preflight")) {
+            Console.WriteLine("{\"present\":false,\"version\":null,\"override\":null,\"hashes\":{}}");
         } else if (remote.Contains("grep -q -e --read-only")) {
             Console.WriteLine("read-only");
         } else if (remote.EndsWith(" status --read-only 2>&1")) {

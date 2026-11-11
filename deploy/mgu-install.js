@@ -703,6 +703,64 @@ function unpackKit(q) {
     return `rm -rf ${q} && umask 022 && mkdir -m 700 -p ${q} && tar -xzf - -C ${q} && `;
 }
 
+const UPDATER_IDENTITY_FILES = ['updater.js', 'cn_sources.js', 'sources.js', 'fetch.js', 'updater.conf'];
+const SETUP_INSTALLED = 'Installation completed. Verify the active CN updater and an online update in the Store.';
+
+/* Reads bytes only: no status command, configuration changes or daemon code. */
+const UPDATER_IDENTITY = '/usr/bin/node -e \'/* mgu-cn-updater-preflight */' +
+    'var fs=require(`fs`),crypto=require(`crypto`),base=`/var/opt/mgu-updater/current/`;' +
+    'var out={present:false,version:null,override:null,hashes:{}};' +
+    'try{out.present=!!fs.lstatSync(base.slice(0,-1));}catch(e){if(e.code!==`ENOENT`)throw e;}' +
+    'if(out.present){out.version=JSON.parse(fs.readFileSync(base+`component.json`,`utf8`)).version;}' +
+    'var local=`/var/opt/mgu-updater/updater.local.conf`;' +
+    'if(fs.existsSync(local)){fs.readFileSync(local,`utf8`).split(String.fromCharCode(10)).forEach(function(line){' +
+    'var at=line.indexOf(`=`);if(at>=0&&line.slice(0,at).trim()===`distribution_channel`)out.override=line.slice(at+1).trim();});}' +
+    '[`updater.js`,`cn_sources.js`,`sources.js`,`fetch.js`,`updater.conf`].forEach(function(name){' +
+    'try{out.hashes[name]=crypto.createHash(`sha256`).update(fs.readFileSync(base+name)).digest(`hex`);}' +
+    'catch(e){if(e.code!==`ENOENT`)throw e;out.hashes[name]=null;}});console.log(JSON.stringify(out));\'';
+
+function updaterPackageIdentity(artifact) {
+    const members = new Map(untgz(artifact.data).map((m) => [m.name, m]));
+    const item = members.get('component.json');
+    const c = item && JSON.parse(item.data.toString('utf8'));
+    if (!c || c.id !== 'mgu-updater' || c.version !== artifact.entry.version || !Array.isArray(c.files)) {
+        throw new Usage('the CN updater package has no matching component manifest');
+    }
+    const hashes = {};
+    UPDATER_IDENTITY_FILES.forEach((name) => {
+        const file = c.files.find((f) => f.path === name);
+        const member = members.get(`files/${name}`);
+        if (!file || !member || sha256(member.data) !== file.sha256) {
+            throw new Usage(`the CN updater package has no verified ${name}`);
+        }
+        hashes[name] = file.sha256;
+    });
+    const conf = members.get('files/updater.conf').data.toString('utf8');
+    if (!/^distribution_channel[ \t]*=[ \t]*walle-cn[ \t]*$/m.test(conf) ||
+        !/^local_conf[ \t]*=[ \t]*\/var\/opt\/mgu-updater\/updater.local.conf[ \t]*$/m.test(conf)) {
+        throw new Usage('the updater package does not declare the supported CN configuration');
+    }
+    return { version: c.version, hashes };
+}
+
+function updaterCompatibility(current, target) {
+    if (!current || typeof current.present !== 'boolean' || !current.hashes ||
+        !Object.prototype.hasOwnProperty.call(current, 'override')) {
+        return 'the installed updater identity could not be read';
+    }
+    if (current.override !== null && current.override !== 'walle-cn') {
+        return 'updater.local.conf overrides distribution_channel; preserve it and use a reviewed migration procedure';
+    }
+    if (current.present && !SEMVER.test(current.version || '')) {
+        return 'the installed updater version is unknown';
+    }
+    if (current.present && compareVersions(current.version, target.version) >= 0 &&
+        UPDATER_IDENTITY_FILES.some((name) => current.hashes[name] !== target.hashes[name])) {
+        return `installed updater ${current.version} is not the verified CN payload; equal/newer versions need a reviewed migration, not a downgrade`;
+    }
+    return null;
+}
+
 async function firstInstall(o) {
     // --from: its catalog is read first, so a missing or bad one stops before the unit search
     const from = o.from ? fromFolder(o.from) : null;
@@ -725,6 +783,18 @@ async function firstInstall(o) {
         const data = await c.fetch();
         say(`  ${sha256(data)}  ${c.entry.artifact.name}`);
         artifacts.push({ entry: c.entry, data });
+    }
+    const updater = artifacts.find((a) => a.entry.id === 'mgu-updater');
+    if (!updater) {
+        throw new Usage('the CN catalog has no mgu-updater; nothing was sent');
+    }
+    const target = updaterPackageIdentity(updater);
+    const existing = ssh(o, UPDATER_IDENTITY, { input: Buffer.alloc(0), capture: true });
+    let current = null;
+    try { current = existing.status === 0 ? JSON.parse(existing.stdout) : null; } catch (e) { /* fail closed */ }
+    const refusal = updaterCompatibility(current, target);
+    if (refusal) {
+        throw new Usage(`${refusal}; nothing was sent`);
     }
     const deploy = artifacts.find((a) => a.entry.id === 'mgu-deploy');
     const entries = deployToolFiles(deploy.data)
@@ -756,7 +826,7 @@ async function firstInstall(o) {
             return 1;
         }
     } else if (tiles.shown && running) {
-        say('Setup is done: the Store installs and updates everything from here on.');
+        say(SETUP_INSTALLED);
         return 0;
     }
     say('Restart the head unit to finish setup.');
@@ -1373,5 +1443,6 @@ if (require.main === module || FROM_STDIN) {
     });
 }
 
-module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, sshBanner, enetInterfaces, hsfzFrame, hsfzFrames,
+module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, updaterPackageIdentity, updaterCompatibility, SETUP_INSTALLED,
+    sshBanner, enetInterfaces, hsfzFrame, hsfzFrames,
     didAddress, hsfzGateway, hsfzHuAddress, findUnit, reach, tilesShow, STATUS_HAS };

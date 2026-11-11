@@ -340,7 +340,8 @@ installed but not active, or, on iDrive 7, while the running app manager
 does not yet run the provisioning fallback that shows our apps' tiles,
 or, on iDrive 8, while the deploy tool's `status` does not report the
 Store's tile and those of the other apps listed in `custom_apps.json`
-as shown (a Store not yet registered included); else `Setup is done`. When the fallback could not be turned on, it says
+as shown (a Store not yet registered included); otherwise it reports installation
+completed and asks for CN runtime/update acceptance. When the fallback could not be turned on, it says
 `The Store's tile cannot show:` and the reason (exit 1 when the services
 run). After the restart line, at a
 terminal (not under CI, nor with `--no-restart-prompt`), it asks
@@ -366,6 +367,18 @@ only away from the car:
 node mgu-install.js usb-repo <folder>                                                   # at home
 node mgu-install.js first-install --from <folder>/mgu-repo/mgu-store --identity <key>   # at the car
 ```
+
+CN setup reads the installed updater's version, relevant file hashes and
+`updater.local.conf` before sending its install kit. A same/newer updater must
+match the verified CN payload; an unknown or different payload is refused.
+An explicit non-CN `distribution_channel` override is refused at any version.
+The installer never downgrades to force an edition switch or edits that override.
+
+Package installation, visible tiles and running services do not prove the
+active edition. After restart, acceptance requires the updater to report
+`distribution: "walle-cn"` and `github: false`, the intended effective sources,
+and a successful subsequent CN online update. Until then, report installation
+completed with runtime/update verification pending.
 
 Before installing, the car is parked, on stable power (engine running or a
 charger connected), and stays awake until the command finishes.

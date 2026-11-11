@@ -6603,7 +6603,9 @@ function fakeRelease(api) {
     hu(['artifact', DEPLOY, '--out', art]);
     hu(['artifact', path.join(DEPLOY, '..', 'native', 'app-privacy'), '--out', art]);
     const privacy = fs.readdirSync(art).find((n) => n.startsWith('app-privacy@'));
-    const files = [path.join(art, `mgu-deploy@${VERSION}.tgz`), path.join(art, privacy), namedTool('mgu-updater', '0.2.0'),
+    const updater = path.join(art, 'mgu-updater@0.2.0.tgz');
+    fs.writeFileSync(updater, require('./cn_updater_fixture').artifact('0.2.0'));
+    const files = [path.join(art, `mgu-deploy@${VERSION}.tgz`), path.join(art, privacy), updater,
         namedTool('mgu-uplink', '0.4.0'), storeArtifact(), namedTool('mgu-render', '0.1.0', (c) => { c.mguProvides = 'renderer'; })];
     const entries = [publishedEntry(api, files[0], 0, 'tool'), publishedEntry(api, files[1], 1, 'tool'), publishedEntry(api, files[2], 2, 'tool'),
         publishedEntry(api, files[3], 3, 'tool', { optional: true, uninstallable: true }),
@@ -6796,6 +6798,15 @@ function testMguInstall() {
         check('mgu-install first-install: no remote command carries a double quote or a backslash (Windows passes them through its own quoting)',
             r.calls.every((a) => !/["\\]/.test(a[a.length - 1])), r.calls.map((a) => a[a.length - 1]).join('\n'));
         check('mgu-install first-install: leaves no staging folder', !fs.readdirSync(root.p('var/opt')).some((n) => /^mgu-deploy-kit-/.test(n)));
+        const localConf = root.p('var/opt/mgu-updater/updater.local.conf');
+        write(localConf, 'distribution_channel = official\nproxy = http://private-proxy.invalid:8080\n');
+        const beforeOverride = root.hash();
+        const overridden = mguInstall(['first-install', '--host', '10.0.0.9', '--no-uplink', '--no-renderer'], opts);
+        check('mgu-install CN migration: the real read-only probe refuses a local channel override without changing it',
+            overridden.status === 2 && overridden.stderr.includes('overrides distribution_channel') &&
+            !overridden.out.includes('private-proxy') && overridden.calls.length === 2 &&
+            root.hash().hash === beforeOverride.hash, overridden.out);
+        fs.unlinkSync(localConf);
         check('mgu-install first-install: the kit runs under umask 022, in a folder made root\'s alone by its mode',
             r.calls.some((a) => /^rm -rf '\/var\/opt\/mgu-deploy-kit-\d+' && umask 022 && mkdir -m 700 -p '\/var\/opt\/mgu-deploy-kit-\d+' && tar /.test(a[a.length - 1])),
             r.calls.map((a) => a[a.length - 1]).join('\n'));
@@ -6806,7 +6817,7 @@ function testMguInstall() {
         r = mguInstall(['first-install', '--host', '10.0.0.9', '--no-uplink', '--no-renderer'], Object.assign({ env: { FAKE_GH_TOKEN: TOKEN } }, opts));
         check('mgu-install first-install again: changes nothing installed, and says setup is done', r.status === 0 &&
             r.out.includes('already installed') && !r.out.includes('built robertn_store') && r.out.includes('updater sources kept') &&
-            r.stdout.endsWith('Setup is done: the Store installs and updates everything from here on.\n') &&
+            r.stdout.endsWith(require(MGU_INSTALL).SETUP_INSTALLED + '\n') &&
             gh.requests().every((x) => x.auth === null && !x.path.startsWith('/repos/')) &&
             !r.calls.some((a) => / updater-token/.test(a[a.length - 1])), r.out.slice(-2000));
         r = mguInstall(['first-install', '--host', '10.0.0.9'], Object.assign({ env: { FAKE_GH_TOKEN: TOKEN } }, opts));
@@ -9545,7 +9556,7 @@ function testMguInstallTiles() {
         const mgr = startInplace(root);
         r = mguInstall(args, opts);
         check('mgu-install tiles: the manager on the fallback copy: setup is done',
-            r.status === 0 && r.stdout.endsWith('Setup is done: the Store installs and updates everything from here on.\n'), r.out.slice(-1500));
+            r.status === 0 && r.stdout.endsWith(require(MGU_INSTALL).SETUP_INSTALLED + '\n'), r.out.slice(-1500));
         mgr.kill('SIGKILL');
         fs.writeFileSync(`${root.R}.mgr.pid`, '4000');
         fs.unlinkSync(root.p('etc/systemd/system/mgu-app-fallback.service'));

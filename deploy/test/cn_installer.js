@@ -10,7 +10,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { tgz, untgz, SOURCES } = require('../mgu-install');
+const { tgz, untgz, SOURCES, updaterPackageIdentity } = require('../mgu-install');
 
 const installer = path.resolve(__dirname, '../mgu-install.js');
 const wrapper = path.resolve(__dirname, '../install.sh');
@@ -25,7 +25,11 @@ const artifact = tgz([
 ], 0);
 const entry = { id: 'mgu-deploy', kind: 'tool', version: '1.0.0', title: 'Deploy fixture',
     artifact: { name: 'mgu-deploy@1.0.0.tgz', url: 'mgu-deploy@1.0.0.tgz', size: artifact.length, sha256: hash(artifact) } };
-let catalog = { schema: 2, components: [entry] };
+const updaterArtifact = require('./cn_updater_fixture').artifact('1.0.0');
+const updaterEntry = { id: 'mgu-updater', kind: 'tool', version: '1.0.0', title: 'CN updater fixture',
+    artifact: { name: 'mgu-updater@1.0.0.tgz', url: 'mgu-updater@1.0.0.tgz',
+        size: updaterArtifact.length, sha256: hash(updaterArtifact) } };
+let catalog = { schema: 2, components: [entry, updaterEntry] };
 const installerData = fs.readFileSync(installer);
 const server = http.createServer((req, res) => {
     requests.push({ path: req.url, auth: req.headers.authorization });
@@ -36,6 +40,7 @@ const server = http.createServer((req, res) => {
     const files = {
         '/catalog.json': Buffer.from(JSON.stringify(catalog)),
         '/mgu-deploy@1.0.0.tgz': artifact,
+        '/mgu-updater@1.0.0.tgz': updaterArtifact,
         '/bootstrap/mgu-install.js': installerData,
         '/bootstrap/SHA256SUMS': `${hash(installerData)}  mgu-install.js\n`,
         '/bad/mgu-install.js': installerData,
@@ -75,6 +80,7 @@ if (args[0] === '-V') { console.log('OpenSSH_9.0'); process.exit(0); }
 const cmd = args[args.length - 1];
 fs.appendFileSync(process.env.CN_TEST_SSH_LOG, JSON.stringify(cmd) + '\\n');
 if (cmd.includes('rawcodingdata')) { console.log('ok'); }
+else if (cmd.includes('mgu-cn-updater-preflight')) { console.log(process.env.CN_TEST_UPDATER || JSON.stringify({present:false,override:null,hashes:{}})); }
 else if (cmd.includes('grep -q -e --read-only')) { console.log('read-only'); }
 else if (cmd.includes('status --read-only')) { console.log('read-only fixture'); }
 else if (cmd.includes('grep -q remove-all')) { console.log('old'); }
@@ -103,7 +109,8 @@ else { console.error('unexpected SSH fixture command: ' + cmd); process.exit(99)
     console.log('ok - stable source identities use CN HTTPS catalogs');
     check('first-install uses the public catalog', await invoke(['first-install', '--host', 'fixture',
         '--no-renderer', '--no-uplink', '--no-restart-prompt']));
-    assert.deepStrictEqual(requests.map((r) => r.path), ['/catalog.json', '/mgu-deploy@1.0.0.tgz']);
+    const fullDownload = ['/catalog.json', '/mgu-deploy@1.0.0.tgz', '/mgu-updater@1.0.0.tgz'];
+    assert.deepStrictEqual(requests.map((r) => r.path), fullDownload);
     assert(requests.every((r) => !r.auth));
     const staged = untgz(fs.readFileSync(stage));
     assert.deepStrictEqual(JSON.parse(staged.find((f) => f.name === 'sources.json').data), SOURCES);
@@ -121,10 +128,27 @@ else { console.error('unexpected SSH fixture command: ' + cmd); process.exit(99)
     check('default usb-repo prepares the CN distribution', await invoke(['usb-repo', stick]));
     const from = path.join(stick, 'mgu-repo/mgu-store');
     assert(fs.existsSync(path.join(from, 'catalog.json')));
-    assert.deepStrictEqual(requests.map((r) => r.path), ['/catalog.json', '/mgu-deploy@1.0.0.tgz']);
+    assert.deepStrictEqual(requests.map((r) => r.path), fullDownload);
     requests.length = 0;
     check('--from installs without HTTP', await invoke(['first-install', '--from', from,
         '--host', 'fixture', '--no-renderer', '--no-uplink', '--no-restart-prompt']));
+    assert.strictEqual(requests.length, 0);
+    const target = updaterPackageIdentity({ entry: updaterEntry, data: updaterArtifact });
+    for (const [label, snapshot, code] of [
+        ['same-version official updater', { present: true, version: '1.0.0', override: null, hashes: {} }, 2],
+        ['newer unverified updater', { present: true, version: '1.0.1', override: null, hashes: {} }, 2],
+        ['older updater with non-CN override', { present: true, version: '0.9.0', override: 'official', hashes: {} }, 2],
+        ['unknown installed version', { present: true, version: null, override: null, hashes: {} }, 2],
+        ['same verified CN payload', { present: true, version: '1.0.0', override: null, hashes: target.hashes }, 0],
+        ['older updater with no override', { present: true, version: '0.9.0', override: null, hashes: {} }, 0]
+    ]) {
+        if (fs.existsSync(stage)) fs.unlinkSync(stage);
+        const guarded = await run(process.execPath, [installer, 'first-install', '--from', from,
+            '--host', 'fixture', '--no-renderer', '--no-uplink', '--no-restart-prompt'],
+        Object.assign({}, env, { CN_TEST_UPDATER: JSON.stringify(snapshot) }));
+        check(`migration guard: ${label}`, guarded, code);
+        assert.strictEqual(fs.existsSync(stage), code === 0, guarded.out);
+    }
     assert.strictEqual(requests.length, 0);
     fs.writeFileSync(log, '');
     for (const args of [['token'], ['token', '--list'], ['first-install', '--token'],
