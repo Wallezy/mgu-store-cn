@@ -109,7 +109,7 @@ function sourceNames(rows, sources) {
     const author = (r) => (of(r) ? sourceAuthor(of(r)) : '');
     return (r) => {
         const s = of(r);
-        if (!s) {
+        if (!s || cnSourceLabel(s)) {
             return '';
         }
         const twin = (rows || []).some((o) => o !== r && o.title === r.title && o.source !== r.source && author(o) === author(r));
@@ -281,7 +281,16 @@ function statusLine(st, connected, secret) {
 const SOURCE_STATE = { checking: 'Checking', error: 'Error', 'auth-needed': 'Sign in', offline: 'Offline' };
 
 function sourceLabel(src) {
-    return src.label || src.id;
+    return cnSourceLabel(src) || src.label || src.id;
+}
+
+/* Fixed CN catalogs have short display names in either release channel. */
+function cnSourceLabel(src) {
+    if (src.usb || src.type === 'usb') {
+        return '';
+    }
+    const match = /^https:\/\/mgu\.walle\.pw\/mgu\/cn\/(?:beta\/)?(mgu-store|idrive-apps)\/catalog\.json$/.exec(String(src.label || ''));
+    return match ? `walle/${match[1]}-cn` : '';
 }
 
 /* The second column of a source's row: what needs the owner, else the

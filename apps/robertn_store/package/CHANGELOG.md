@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.40
+
+CN application tiles omit the catalog hostname. Source lists and details show
+walle/mgu-store-cn or walle/idrive-apps-cn in both release channels.
+
 ## 0.9.39
 
 The Settings title shows CN Beta or CN Stable from the running updater's channel.
