@@ -450,6 +450,14 @@ eq(text(f, 'versions'), 'Updater 0.4.0 · Store 0.7.0 · Renderer mgu-renderd 1.
 eq(text(screen('settings', {}, { allProviders: { renderer: [{ id: 'mgu-render', version: '0.2.0' }, { id: 'mgu-renderd', version: '1.1.2' }] } }),
     'versions'), 'Updater 0.4.0 · Store 0.7.0 · Renderer mgu-render 0.2.0, mgu-renderd 1.1.2', 'every installed renderer');
 const idle = { busy: null, components: fixture.state().components.map((c) => Object.assign({}, c, { queued: false })) };
+eq(text(screen('settings', {}, { distribution: 'walle-cn', releaseChannel: 'beta' }), 'title'),
+    'Settings · CN Beta', 'the running updater identifies the Beta channel');
+eq(text(screen('settings', {}, { distribution: 'walle-cn', releaseChannel: 'stable' }), 'title'),
+    'Settings · CN Stable', 'the running updater identifies the Stable channel');
+eq(text(screen('settings', {}, { distribution: 'walle-cn' }), 'title'), 'Settings',
+    'an updater without a channel does not imply Stable');
+eq(text(screen('settings', {}, { releaseChannel: 'beta' }), 'title'), 'Settings',
+    'the channel badge belongs to the CN distribution');
 ok(screen('settings', {}, idle).labels.indexOf('Restart head unit') >= 0, 'Restart head unit with nothing installing');
 const refused = Object.assign({}, idle, { rebootError: 'too soon after start-up, possible in 3 min' });
 eq(text(screen('settings', {}, refused), 'note'), 'Restart failed: too soon after start-up, possible in 3 min', 'a refused restart beside Restart head unit');

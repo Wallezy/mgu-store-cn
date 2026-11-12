@@ -118,9 +118,11 @@ Verify a genuinely newer subsequent release separately. The app's version
 label, successful CI and reachable OSS files alone cannot establish this.
 
 Map components retain `robertn_waze_cluster 0.6.7`, `waze-on-cluster 0.9.10`
-and `cluster-render 0.5.4`. The management candidate uses Store `0.9.38`,
+and `cluster-render 0.5.4`. The migration candidate uses Store `0.9.38`,
 updater `0.8.42` and deploy `0.8.17`, including the reviewed upstream changes
 through `e883efb`. These are candidate versions without Stable vehicle approval.
+Store `0.9.39` is the subsequent online-update candidate; see the two-snapshot
+trial in [CN-RELEASE-CHANNELS.md](CN-RELEASE-CHANNELS.md).
 Deploy `0.8.16` has a known failed owner trial: its whole-package comparison
 rejects relocated RHMI files and its source-only recovery omits interface
 resources. It must not be used for a new migration trial.

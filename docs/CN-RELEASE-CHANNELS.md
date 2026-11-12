@@ -74,6 +74,27 @@ downgrades. Beta-to-Stable either uses compatible retained bytes/a newer
 Stable version or the verified recovery transaction; it never forces a
 downgrade merely to change a label.
 
+## Prepared online-update trial
+
+Keep two complete, independently verified Beta snapshots. The first is the
+local migration input; the second is the newer public catalog. After migration
+and its local/channel verification succeed, the owner updates through the
+Store. A real code change, rather than a fabricated version or modified
+same-version archive, supplies the online update.
+
+The RHMI recovery trial uses deploy 0.8.17 and Store 0.9.38 for migration,
+then Store 0.9.39 for the online self-update. Store 0.9.39 shows `CN Beta` or
+`CN Stable` in Settings from the running updater's reported channel. The
+updater, native map components and deploy tool keep the same bytes between
+these two snapshots. Both snapshots retain independent hashes and provenance.
+
+Verify the migration transaction before the online update. Once its installed
+payloads have been updated, the old transaction is historical and is not a
+valid verifier or blind rollback for the new payloads. Use the updater's
+supported component rollback for the online update; preserve both the migration
+and subsequent-update evidence. Promotion evidence names the final snapshot
+and records the tested path from the initial snapshot.
+
 ## Maintenance automation
 
 Monitor upstream review, CN adaptation, CI, Beta publication, vehicle evidence,

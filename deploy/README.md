@@ -9,7 +9,7 @@ snapshots every change first, and restores a snapshot on request.
 | `deploy/mgu-install.js` | the owner's computer (Node 18+; Windows, macOS, Linux) | the first install over SSH from the CN catalog, USB sticks as local repos |
 | `deploy/install.sh`, `deploy/install.ps1` | the owner's computer, Node 18+ | download and verify the CN JavaScript installer |
 | `deploy/hu` | the Mac (system Node) | packs tool artifacts, installs components built from this checkout over SSH (development) |
-| `deploy/sources.json` | | the updater's sources the installers seed: the Store's own, idrive7-apps, idrive-apps and car-apps |
+| `deploy/sources.json` | | the managed CN Store and idrive-apps HTTPS catalogs |
 | `deploy/transport/` | the Mac (system `python3`) | finds the unit's sshd over ENET or the hotspot, relays ENET, and the `--arm-debug` bootstrap |
 | `deploy/unit/mgu-deploy.sh` → `mgu-deploy.js` | the unit, as root, under its Node 8 | the installer itself |
 | `tools/oap_link.js`, `tools/oap_pack.js` | the unit (and the build machine) | build source packages and prepare packages built elsewhere |
@@ -20,8 +20,8 @@ snapshots every change first, and restores a snapshot on request.
 
 - **The local deploy tool** (this folder) bootstraps the car over SSH:
   `mgu-install.js` from the published release, `deploy/hu` from a
-  checkout. It installs app-privacy, the updater and the Store, seeds the
-  updater's sources and adds a GitHub token.
+  checkout. It installs app-privacy, the updater and the Store and seeds the
+  updater's CN sources. CN setup does not use a GitHub token.
 - **The updater** (`native/mgu-updater`) is the cloud installer: it
   downloads from its sources and installs each artifact by calling the
   installed deploy tool, `/var/opt/mgu-deploy/mgu-deploy.sh install
@@ -31,6 +31,13 @@ Both follow one contract: a tool is `component.json` installed as
 `/var/opt/<id>/versions/<version>/` with `current` switched by rename; an
 app's installed `package.json` carries `"mguLocalOnly": true`. Every install
 takes the same path, whichever installer starts it.
+
+For an existing official installation, use the supported
+[distribution migration](../docs/CN-MIGRATION.md). The
+[two-snapshot Beta trial](../docs/CN-RELEASE-CHANNELS.md#prepared-online-update-trial)
+separates the local migration from the subsequent real Store online update.
+Verify the migration before that update; its old transaction does not describe
+payloads installed by a later update.
 
 ## From the Mac
 

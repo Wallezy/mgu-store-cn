@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.9.39
+
+The Settings title shows CN Beta or CN Stable from the running updater's channel.
+An older updater without that information keeps the ordinary Settings title.
+
+## 0.9.38
 
 - The CN distribution requires its migration-aware updater and deploy tool. Its candidate version is separate from the upstream Store while map application localization retains the app versions.
 

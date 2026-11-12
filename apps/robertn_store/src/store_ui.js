@@ -324,6 +324,9 @@ function settingsView(m) {
     const unit = st && st.unit;
     const renderers = st && st.allProviders && Array.isArray(st.allProviders.renderer) ? st.allProviders.renderer : [];
     return {
+        title: { text: tr("Settings") + (st && st.distribution === 'walle-cn' &&
+            ['beta', 'stable'].indexOf(st.releaseChannel) >= 0 ?
+            ` · CN ${st.releaseChannel === 'beta' ? 'Beta' : 'Stable'}` : '') },
         note: { text: m.note || (restartFailed(m) || '') },
         repos: srcs ? { items: srcs.map(sourceRow), empty: tr("None") } : { items: [], empty: '' },
         addRepo: srcs ? button(tr("Add source"), { do: 'add-source' }, { vicon: 'plus', style: 'tinted', color: BLUE }) : hidden,
