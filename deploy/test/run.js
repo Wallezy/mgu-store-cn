@@ -9806,11 +9806,20 @@ function testEditionMigration() {
     check('edition: ID8 same-version migration is not guessed', eightPlan.status === 2 &&
         eightPlan.out.includes('ID7 only'), eightPlan.out);
 
-    for (const point of ['before-replace', 'after-replace']) {
+    const betaManifest = readJson(manifest);
+    betaManifest.release_channel = 'beta';
+    write(manifest, JSON.stringify(betaManifest));
+    for (const point of ['before-channel', 'after-channel', 'before-replace', 'after-replace']) {
         const cut = donorRoot();
         cut.run(['install', '--artifact', old, '--yes']);
         write(settings(cut), '{"saved":true}');
+        const localConf = cut.p('var/opt/mgu-updater/updater.local.conf');
+        const priorConf = 'proxy = http://private-fixture.invalid:8080\nrelease_channel = stable\n';
+        write(localConf, priorConf);
         const expected = jsonLast(plan(cut));
+        check(`edition: ${point} Beta plan binds channel hashes without exposing settings`,
+            expected.plan.releaseChannel === 'beta' && expected.plan.channelConfig.changed &&
+            !JSON.stringify(expected).includes('private-fixture'));
         const stopped = cut.run(['edition-migrate', '--expect-plan', expected.id, '--yes'].concat(options),
             { MGU_DEPLOY_TEST_EDITION_STOP: point });
         check(`edition: interrupted at ${point}, durable transaction blocks further writes`,
@@ -9818,8 +9827,18 @@ function testEditionMigration() {
         const recovered = cut.run(['edition-rollback', expected.id, '--yes']);
         check(`edition: recovery at ${point} restores old content and settings`,
             recovered.status === 0 && fs.readFileSync(settings(cut), 'utf8') === '{"saved":true}' &&
-            fs.readFileSync(path.join(cut.home(app(cut).uid), 'source/label.txt'), 'utf8') === 'old text', recovered.out);
+            fs.readFileSync(path.join(cut.home(app(cut).uid), 'source/label.txt'), 'utf8') === 'old text' &&
+            fs.readFileSync(localConf, 'utf8') === priorConf, recovered.out);
     }
+    root = donorRoot();
+    root.run(['install', '--artifact', old, '--yes']);
+    const betaPlan = jsonLast(plan(root));
+    r = root.run(['edition-migrate', '--expect-plan', betaPlan.id, '--yes'].concat(options));
+    check('edition: Beta channel persists through successful migration',
+        r.status === 0 && /release_channel = beta/.test(fs.readFileSync(root.p('var/opt/mgu-updater/updater.local.conf'), 'utf8')), r.out);
+    r = root.run(['edition-rollback', betaPlan.id, '--yes']);
+    check('edition: rollback removes a channel configuration that was absent before',
+        r.status === 0 && !fs.existsSync(root.p('var/opt/mgu-updater/updater.local.conf')), r.out);
 }
 
 function testEditionToolMigration() {

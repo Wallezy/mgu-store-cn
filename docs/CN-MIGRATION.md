@@ -1,7 +1,9 @@
 # CN distribution migration
 
-Status: **development candidate; no HU integration approval or public installation release**.
-状态：**迁移入口已实现并进行离线测试，尚未通过车机集成验收，不可作为正式换装发行**。
+Status: **owner Beta trial entrypoint; no Stable vehicle approval**.
+状态：**支持车主明确选择的 Beta 试验入口，尚无 Stable 实车验收**。
+Channel preparation, publication and promotion are described in
+[CN-RELEASE-CHANNELS.md](CN-RELEASE-CHANNELS.md).
 
 ## Scope
 
@@ -34,6 +36,7 @@ The local `deploy/mgu-install.js` exposes:
 | --- | --- | --- |
 | `migrate-cn` preparation | `--from`, `--plan-only`, existing SSH options | Stages its verified runner and packages; compiles candidates and returns a plan hash plus refusals |
 | `migrate-cn` execution | `--from`, `--expect-plan`, existing SSH options | Rechecks the exact plan and applies supported changes |
+| Beta owner trial | Explicit `--channel beta`, `--expect-snapshot`, `--expect-plan`, `--from` | Permits the reviewed test snapshot without claiming Stable approval; all compatibility/recovery checks remain |
 | `migration-status` | `--transaction`, existing SSH options | Reads the durable journal without repairs |
 | `migration-verify` | `--transaction`, existing SSH options | Verifies installed contents, tiles and required restart; does not claim online-update acceptance |
 | `migration-rollback` | `--transaction`, `--yes`, existing SSH options | Restores independent old payloads and saved application data |
@@ -44,14 +47,16 @@ No Root reflash is part of migration.
 
 `--from` is the combined directory produced by `release/prepare_cn.py`, including
 `cn-manifest.json`. Its bootstrap must match the running installer exactly.
-Execution refuses a preparation snapshot (`installReady: false`) before SSH.
-The local preparation helper never sets it ready. Integration and public
-release acceptance remain prerequisites; editing that flag is not validation.
+Stable execution refuses a preparation snapshot (`installReady: false`) before
+SSH. Beta execution requires the explicit channel and exact reviewed snapshot
+and plan hashes. It leaves `installReady: false`; successful trial installation
+does not promote the candidate. The local preparation helper never sets it ready.
+Stable promotion and public acceptance are separate operations.
 
 ## Transaction behavior
 
 Plans bind the local installer, snapshot, target artifacts, compiled code,
-installed content, firmware, boot identity and source-state hashes. The
+installed content, firmware, boot identity, release channel and source-state hashes. The
 linker's build timestamp is excluded from the compiled-code comparison;
 complete before/after package SHA-256 values remain in the journal.
 

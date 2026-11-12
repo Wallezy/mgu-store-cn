@@ -7255,6 +7255,26 @@ function editionSources() {
     });
     return result;
 }
+function editionChannelConfig(channel) {
+    if (['stable', 'beta'].indexOf(channel) < 0) throw refuse('unknown CN release channel');
+    var file = path.join(updaterDir(), 'updater.local.conf'), st = lstatOrNull(file);
+    if (st && !st.isFile()) throw refuse('updater local configuration is not a regular file');
+    var text = st ? fs.readFileSync(file, 'utf8') : '', values = [];
+    text.split(/\r?\n/).forEach(function (line) {
+        var match = /^\s*release_channel\s*=\s*(.*?)\s*$/.exec(line);
+        if (match) values.push(match[1]);
+    });
+    if (values.length > 1 || values.some(function (v) { return ['stable', 'beta'].indexOf(v) < 0; })) {
+        throw refuse('ambiguous or unknown installed CN release channel');
+    }
+    var changed = (values[0] || 'stable') !== channel;
+    var next = changed ? text.split(/\r?\n/).filter(function (line) {
+        return !/^\s*release_channel\s*=/.test(line);
+    }).join('\n').replace(/\n*$/, '\n') + 'release_channel = ' + channel + '\n' : text;
+    return { before: st ? sha256File(file) : null,
+        after: changed ? sha256Buf(Buffer.from(next)) : st ? sha256File(file) : null,
+        changed: changed, text: next, mode: st ? st.mode & 0o7777 : 0o600 };
+}
 function editionCurrent(id) {
     var app = installedApp(id), tool = installedTools().filter(function (t) { return t.id === id; })[0];
     if (app && tool) throw refuse('ambiguous installed identity: ' + id);
@@ -7367,6 +7387,7 @@ function editionOwnership() {
                 ['robertnisipeanu/' + group, 'wallezy/' + group + '-cn'].indexOf(String(s.repo || '').toLowerCase()) >= 0 ||
                 s.type === 'https' && [
                     'https://mgu.walle.pw/mgu/cn/' + group + '/catalog.json',
+                    'https://mgu.walle.pw/mgu/cn/beta/' + group + '/catalog.json',
                     'https://mgu.walle.pw/mgu/' + group + '/catalog.json',
                     'https://walle-mgu.oss-cn-hangzhou.aliyuncs.com/mgu/' + group + '/catalog.json',
                     'https://walle-jenkins.oss-cn-beijing.aliyuncs.com/mgu/' + group + '/catalog.json'
@@ -7400,6 +7421,7 @@ function editionPrepare(args, stage) {
         !/^[a-f0-9]{64}$/.test(release.installer || '') || !Array.isArray(release.components)) {
         throw refuse('migration requires a verified distribution manifest');
     }
+    var channel = release.release_channel || 'stable', channelConfig = editionChannelConfig(channel);
     var declared = {};
     release.components.forEach(function (c) {
         if (!c || EDITION_IDS.indexOf(c.id) < 0 || declared[c.id] || !semverParts(c.version) ||
@@ -7478,12 +7500,13 @@ function editionPrepare(args, stage) {
     unmapped.forEach(function (item) {
         blocked.push({ id: item.id, reason: 'installed component has no target mapping in this migration' });
     });
-    var plan = { schema: 1, distribution: 'walle-cn', installer: release.installer,
+    var plan = { schema: 1, distribution: 'walle-cn', releaseChannel: channel, installer: release.installer,
         release: sha256File(args.distributionManifest), unit: unitInfo(), boot: bootId(),
+        channelConfig: { before: channelConfig.before, after: channelConfig.after, changed: channelConfig.changed },
         sources: editionSources(), owners: ownership.owners,
         steps: steps.sort(function (a, b) { return a.id < b.id ? -1 : 1; }),
         unmapped: unmapped, blocked: blocked };
-    return { plan: plan, id: sha256Buf(Buffer.from(JSON.stringify(plan))), artifacts: artifacts };
+    return { plan: plan, id: sha256Buf(Buffer.from(JSON.stringify(plan))), artifacts: artifacts, channelConfig: channelConfig };
 }
 function editionStage() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-edition-'));
@@ -7550,7 +7573,16 @@ function editionApply(journal, step, restoring, stage) {
     if (!editionMatches(a)) throw fail(step.id + ': installed contents do not match the candidate');
 }
 function editionRestore(journal, stage) {
-    var sourceChanged = JSON.stringify(editionSources()) !== JSON.stringify(journal.sourcesAfter || journal.plan.sources);
+    var currentSources = editionSources(), expectedSources = journal.sourcesAfter || journal.plan.sources;
+    var sourceChanged = Object.keys(expectedSources).some(function (name) {
+        var c = journal.plan.channelConfig;
+        /* The journal precedes the atomic channel write. Either recorded
+         * side is recoverable if the process stops at that boundary. */
+        if (name === 'updater.local.conf' && c && c.changed) {
+            return currentSources[name] !== c.before && currentSources[name] !== c.after;
+        }
+        return currentSources[name] !== expectedSources[name];
+    });
     journal.phase = 'restoring'; editionWrite(journal);
     var failed = [];
     if (sourceChanged) failed.push('source/origin state changed outside the recorded transaction; preserved for inspection');
@@ -7590,6 +7622,11 @@ function editionRestore(journal, stage) {
                 }
             } catch (e) { failed.push(name + ': ' + e.message); }
         });
+        if (journal.plan.channelConfig && journal.plan.channelConfig.changed) {
+            var restoredState = loadState();
+            addPending(restoredState, 'mgu-deploy', 'CN release channel restored; restart to load its configuration');
+            saveState(restoredState);
+        }
     }
     journal.phase = failed.length ? 'recovery-needed' : 'restored';
     journal.errors = failed; editionWrite(journal);
@@ -7635,6 +7672,12 @@ function cmdEditionMigrate(args) {
         editionActiveRunner = true;
         journal.phase = 'applying'; editionWrite(journal);
         try {
+            if (prepared.channelConfig.changed) {
+                editionCheckpoint('before-channel');
+                writeAtomic(path.join(updaterDir(), 'updater.local.conf'),
+                    prepared.channelConfig.text, prepared.channelConfig.mode);
+                editionCheckpoint('after-channel');
+            }
             journal.steps.forEach(function (step) {
                 if (step.action === 'retain') { step.phase = 'retained'; editionWrite(journal); return; }
                 step.phase = 'changing'; editionWrite(journal);
@@ -7646,6 +7689,11 @@ function cmdEditionMigrate(args) {
             });
             journal.phase = 'awaiting-verification';
             journal.sourcesAfter = editionSources();
+            if (prepared.channelConfig.changed) {
+                var channelState = loadState();
+                addPending(channelState, 'mgu-deploy', 'CN release channel changed; restart to load its configuration');
+                saveState(channelState);
+            }
             editionWrite(journal);
             say(JSON.stringify({ id: journal.id, phase: journal.phase, installed: true, verified: false }));
             return 0;
@@ -7694,6 +7742,10 @@ function cmdEditionVerify(args) {
         }
         if (unitInfo().hmi !== journal.plan.unit.hmi || unitInfo().firmware !== journal.plan.unit.firmware) {
             throw refuse('head-unit identity/firmware changed since migration');
+        }
+        var config = journal.plan.channelConfig;
+        if (config && editionSources()['updater.local.conf'] !== config.after) {
+            throw refuse('CN release channel configuration changed since migration');
         }
         journal.steps.forEach(function (step) {
             var a = validateArtifact(editionSaved(journal, step, 'after'), stage);

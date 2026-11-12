@@ -1140,7 +1140,7 @@ class Updater {
 
     builtin() {
         if (cnSources.enabled(this.conf)) {
-            return cnSources.definition(cnSources.GROUPS[0]);
+            return cnSources.definition(cnSources.GROUPS[0], null, cnSources.releaseChannel(this.conf));
         }
         return { id: SELF_SOURCE_ID, type: 'github', repo: this.conf.builtin_repo || 'robertnisipeanu/mgu-store', builtin: true };
     }
@@ -1161,7 +1161,7 @@ class Updater {
             try {
                 this.cnExcludedSources = list.filter((s) => !cnSources.groupOf(s) &&
                     (s.type === 'github' || (s.type === 'https' && cnSources.isGithubUrl(s.url))));
-                list = cnSources.normalize(list, this.origins, this.aliases);
+                list = cnSources.normalize(list, this.origins, this.aliases, cnSources.releaseChannel(this.conf));
             } catch (e) {
                 this.sourcesError = e.message;
                 console.log(`sources: ${e.message}`);
@@ -1265,7 +1265,7 @@ class Updater {
                     }
                     cnSources.validateCatalog(def, c);
                 }
-                Object.assign(rt, { mode: c.mode, distribution: c.distribution || null, channel: c.channel || rt.channel, commit: c.commit, components: c.components, checkedAt: c.checkedAt,
+                Object.assign(rt, { mode: c.mode, distribution: c.distribution || null, releaseChannel: c.releaseChannel || 'stable', channel: c.channel || rt.channel, commit: c.commit, components: c.components, checkedAt: c.checkedAt,
                     tokenId: cnSources.enabled(this.conf) ? null : c.token || null, public: c.public === true });
                 if (c.memo && typeof c.memo.key === 'string' && c.memo.version === this.version) {
                     rt.memo = { key: c.memo.key, cat: { mode: c.mode, commit: c.commit, components: c.components, skipped: c.memo.skipped || [], memoKey: c.memo.key } };
@@ -1650,6 +1650,7 @@ class Updater {
             updater: { version: this.version },
             github,
             distribution: github ? null : cnSources.CHANNEL,
+            releaseChannel: github ? null : cnSources.releaseChannel(this.conf),
             unit: this.unit,
             // the installed tools providing each capability
             allProviders: this.providers,
@@ -1807,14 +1808,14 @@ class Updater {
             .then(() => this.readSource(rt))
             .then((cat) => cnSources.enabled(this.conf) ? cnSources.validateCatalog(rt.def, cat) : cat)
             .then((cat) => {
-                Object.assign(rt, { components: cat.components, mode: cat.mode, distribution: cat.distribution || null, channel: cat.channel || rt.channel, commit: cat.commit || null,
+                Object.assign(rt, { components: cat.components, mode: cat.mode, distribution: cat.distribution || null, releaseChannel: cat.releaseChannel || 'stable', channel: cat.channel || rt.channel, commit: cat.commit || null,
                     copyOf: typeof cat.copyOf === 'string' ? cat.copyOf : null,
                     memo: cat.memoKey ? { key: cat.memoKey, cat: JSON.parse(JSON.stringify(cat)) } : null,
                     status: 'ok', error: cat.skipped && cat.skipped.length ? `left out: ${cat.skipped.join('; ')}` : null,
                     checkedAt: Date.now(), answered: true });
                 if (rt.def.type !== 'usb') {
                     mkdirp(path.dirname(this.cacheFile(id)), 0o700);
-                    writeAtomic(this.cacheFile(id), JSON.stringify({ sourceKey: cnSources.cacheKey(rt.def), mode: rt.mode, distribution: rt.distribution, channel: rt.channel, commit: rt.commit,
+                    writeAtomic(this.cacheFile(id), JSON.stringify({ sourceKey: cnSources.cacheKey(rt.def), mode: rt.mode, distribution: rt.distribution, releaseChannel: rt.releaseChannel, channel: rt.channel, commit: rt.commit,
                         components: rt.components, checkedAt: rt.checkedAt, token: rt.tokenId, public: rt.public,
                         memo: rt.memo && { key: rt.memo.key, skipped: cat.skipped || [], version: this.version } }));
                 }
@@ -4301,7 +4302,7 @@ class Updater {
         const needsCatalog = !fs.existsSync(local);
         const deadline = Date.now() + TRIAL_WAIT_MS;
         const fetched = () => !this.sourcesError && (!needsCatalog || (readLease(this.conf).online &&
-            (cnSources.enabled(this.conf) ? cnSources.trialReady(this.src.get(SELF_SOURCE_ID), this.version) : this.reached())));
+            (cnSources.enabled(this.conf) ? cnSources.trialReady(this.src.get(SELF_SOURCE_ID), this.version, cnSources.releaseChannel(this.conf)) : this.reached())));
         // a local one: the sticks are read before the queue it takes up, which may install from them
         const sticks = () => {
             this.scanUsb();

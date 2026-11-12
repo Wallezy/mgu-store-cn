@@ -47,3 +47,4 @@ result = run("require('./release/publish').preflight(false)", {
 });
 assert.strictEqual(result.status, 0);
 console.log('CN release policy: target isolation and exact-commit validation passed');
+require('./immutable_asset_test');

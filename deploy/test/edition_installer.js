@@ -90,6 +90,7 @@ fs.readFileSync(0);
 if (c.includes('status --read-only --json')) console.log(JSON.stringify({components:[{id:'robertn_waze_cluster',version:'1.2.3'}]}));
 else if (c.includes('mgu-edition-runtime')) console.log(JSON.stringify({updater:{version:'1.0.0'},busy:null,components:[],sources:[]}));
 else if (c.includes('edition-plan')) console.log(JSON.stringify({id:'a'.repeat(64),ready:false,plan:{blocked:[{id:'mgu-updater'}]}}));
+else if (c.includes('edition-migrate')) { console.error('fixture target refuses its blocked plan'); process.exit(2); }
 else if (!c.includes('tar -xzf') && !c.startsWith('rm -rf')) process.exit(99);
 `);
 const planned = run(['--plan-only'], { PATH: `${bin}:${process.env.PATH}`, EDITION_SSH_LOG: log });
@@ -101,6 +102,34 @@ assert(!commands.includes('edition-migrate'));
 assert(!commands.includes('first-install'));
 assert(!commands.includes('curl'));
 console.log('ok - ENET preparation stages the release runner and calls its read-only inventory and plan');
+
+manifest.release_channel = 'beta';
+manifest.base_url = 'https://mgu.walle.pw/mgu/cn/beta/';
+for (const f of files.filter((v) => v.path.endsWith('/catalog.json'))) {
+    const file = path.join(root, f.path), catalog = JSON.parse(fs.readFileSync(file));
+    catalog.release_channel = 'beta';
+    const data = Buffer.from(JSON.stringify(catalog));
+    fs.writeFileSync(file, data);
+    f.size = data.length; f.sha256 = hash(data);
+}
+writeManifest();
+const betaDigest = hash(fs.readFileSync(path.join(root, 'cn-manifest.json')));
+const betaEnv = { PATH: `${bin}:${process.env.PATH}`, EDITION_SSH_LOG: log };
+const logBefore = fs.readFileSync(log, 'utf8');
+const betaFirstInstall = cp.spawnSync(process.execPath, [script, 'first-install', '--from', path.join(root, 'mgu-store'), '--host', 'fixture'],
+    { encoding: 'utf8', env: Object.assign({}, process.env, betaEnv), input: '' });
+assert.strictEqual(betaFirstInstall.status, 2);
+assert(betaFirstInstall.stderr.includes('first-install uses Stable'));
+assert.strictEqual(run(['--plan-only'], betaEnv).status, 2);
+assert.strictEqual(run(['--channel', 'beta', '--expect-plan', 'a'.repeat(64)], betaEnv).status, 2);
+assert.strictEqual(run(['--channel', 'beta', '--expect-plan', 'a'.repeat(64), '--expect-snapshot', '0'.repeat(64)], betaEnv).status, 2);
+assert.strictEqual(fs.readFileSync(log, 'utf8'), logBefore);
+const trial = run(['--channel', 'beta', '--expect-plan', 'a'.repeat(64), '--expect-snapshot', betaDigest], betaEnv);
+assert.strictEqual(trial.status, 2);
+assert(trial.stderr.includes('fixture target refuses'));
+assert(fs.readFileSync(log, 'utf8').includes('edition-migrate'));
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root, 'cn-manifest.json'))).installReady, false);
+console.log('ok - explicit Beta trial binds the snapshot and preserves target refusals without forging Stable readiness');
 
 const item = files.find((f) => f.path.endsWith('robertn_waze_cluster@1.2.3.tgz'));
 const saved = fs.readFileSync(path.join(root, item.path));
@@ -120,6 +149,13 @@ const runtime = { distribution: 'walle-cn', github: false, busy: null,
     sources: [{ id: 'maps', type: 'https', label: 'https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json', status: 'ok' }] };
 const journal = { steps: [{ id: 'robertn_waze_cluster', version: '1.2.3' }] };
 assert.strictEqual(installer.migrationRuntimeCheck(runtime, journal), null);
+const betaJournal = Object.assign({}, journal, { plan: { releaseChannel: 'beta' } });
+assert(/another CN release channel/.test(installer.migrationRuntimeCheck(runtime, betaJournal)));
+runtime.releaseChannel = 'beta';
+runtime.sources[0].label = 'https://mgu.walle.pw/mgu/cn/beta/idrive-apps/catalog.json';
+assert.strictEqual(installer.migrationRuntimeCheck(runtime, betaJournal), null);
+runtime.releaseChannel = 'stable';
+runtime.sources[0].label = 'https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json';
 runtime.github = true;
 assert(/not the CN/.test(installer.migrationRuntimeCheck(runtime, journal)));
 runtime.github = false;

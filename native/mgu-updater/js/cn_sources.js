@@ -6,6 +6,7 @@ const { URL } = require('url');
 
 const CHANNEL = 'walle-cn';
 const ROOT = 'https://mgu.walle.pw/mgu/cn/';
+const ROOTS = { stable: ROOT, beta: ROOT + 'beta/' };
 const GROUPS = [
     { id: 'mgu-store', repo: 'robertnisipeanu/mgu-store', fork: 'wallezy/mgu-store-cn', builtin: true },
     { id: 'idrive-apps', repo: 'robertnisipeanu/idrive-apps', fork: 'wallezy/idrive-apps-cn' }
@@ -17,6 +18,14 @@ function enabled(conf) {
 
 function needsGithub(conf) {
     return !enabled(conf);
+}
+
+function releaseChannel(conf) {
+    const value = conf && conf.release_channel || 'stable';
+    if (!Object.prototype.hasOwnProperty.call(ROOTS, value)) {
+        throw new Error('unknown CN release channel');
+    }
+    return value;
 }
 
 function isGithubUrl(value) {
@@ -35,14 +44,16 @@ function groupOf(def) {
         [g.repo, g.fork].indexOf(String(def.repo || '').toLowerCase()) >= 0 :
         def.type === 'https' && [
             `${ROOT}${g.id}/catalog.json`,
+            `${ROOTS.beta}${g.id}/catalog.json`,
             `https://mgu.walle.pw/mgu/${g.id}/catalog.json`,
             `https://walle-mgu.oss-cn-hangzhou.aliyuncs.com/mgu/${g.id}/catalog.json`,
             `https://walle-jenkins.oss-cn-beijing.aliyuncs.com/mgu/${g.id}/catalog.json`
         ].indexOf(def.url) >= 0);
 }
 
-function definition(group, id) {
-    const def = { id: id || group.id, type: 'https', url: `${ROOT}${group.id}/catalog.json` };
+function definition(group, id, channel) {
+    const base = ROOTS[releaseChannel({ release_channel: channel })];
+    const def = { id: id || group.id, type: 'https', url: `${base}${group.id}/catalog.json` };
     if (group.builtin) {
         def.builtin = true;
     }
@@ -51,7 +62,8 @@ function definition(group, id) {
 
 /* Normalization is in memory: startup does not rewrite the owner's sources or
  * installation origins, so an updater trial can return to its previous config. */
-function normalize(list, origins, aliases) {
+function normalize(list, origins, aliases, channel) {
+    releaseChannel({ release_channel: channel });
     const out = list.filter((s) => !groupOf(s));
     GROUPS.forEach((g) => {
         const matches = list.filter((s) => groupOf(s) === g);
@@ -78,7 +90,7 @@ function normalize(list, origins, aliases) {
         if (out.some((s) => s.id === id)) {
             throw new Error(`CN source ${id} conflicts with a custom source`);
         }
-        out.push(definition(g, id));
+        out.push(definition(g, id, channel));
     });
     return out.filter((s) => s.type !== 'github' && !(s.type === 'https' && isGithubUrl(s.url)))
         .sort((a, b) => Number(!!b.builtin) - Number(!!a.builtin));
@@ -98,6 +110,11 @@ function validateCatalog(def, value) {
         !Array.isArray(value.components) || !value.components.length) {
         throw new Error('CN source must provide a nonempty walle-cn release catalog');
     }
+    const channel = def.url.startsWith(ROOTS.beta) ? 'beta' : 'stable';
+    if ((value.releaseChannel || 'stable') !== channel) {
+        throw new Error('CN catalog belongs to another release channel');
+    }
+    const prefix = new URL('.', def.url).pathname;
     value.components.forEach((entry) => {
         const urls = [entry.artifact && (entry.artifact.url || entry.artifact.name)];
         if (entry.icon) {
@@ -109,7 +126,7 @@ function validateCatalog(def, value) {
             }
             const url = new URL(rel, def.url);
             if (url.protocol !== 'https:' || url.hostname !== 'mgu.walle.pw' || url.port ||
-                url.username || url.password || url.search || url.hash || !url.pathname.startsWith('/mgu/cn/')) {
+                url.username || url.password || url.search || url.hash || !url.pathname.startsWith(prefix)) {
                 throw new Error('CN catalog resources must use its domestic HTTPS host and prefix');
             }
         });
@@ -119,13 +136,14 @@ function validateCatalog(def, value) {
 
 /* A response from another source cannot prove this distribution can update
  * itself. The current updater must also be present in its own catalog. */
-function trialReady(runtime, version) {
+function trialReady(runtime, version, channel) {
     const g = GROUPS[0];
-    return !!(runtime && runtime.def.type === 'https' && runtime.def.url === definition(g).url &&
+    return !!(runtime && runtime.def.type === 'https' && runtime.def.url === definition(g, null, channel).url &&
+        (runtime.releaseChannel || 'stable') === releaseChannel({ release_channel: channel }) &&
         runtime.distribution === CHANNEL && runtime.status === 'ok' && !runtime.error && runtime.answered &&
         ['mgu-updater', 'mgu-deploy', 'robertn_store'].every((id) =>
             runtime.components.some((c) => c.id === id && c.artifact && c.artifact.sha256 &&
                 (id !== 'mgu-updater' || catalog.compareVersions(c.version, version) >= 0))));
 }
 
-module.exports = { CHANNEL, ROOT, GROUPS, enabled, needsGithub, isGithubUrl, groupOf, definition, normalize, cacheKey, validateCatalog, trialReady };
+module.exports = { CHANNEL, ROOT, ROOTS, GROUPS, enabled, needsGithub, releaseChannel, isGithubUrl, groupOf, definition, normalize, cacheKey, validateCatalog, trialReady };

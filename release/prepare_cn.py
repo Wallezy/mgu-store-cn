@@ -15,6 +15,7 @@ import tempfile
 import zlib
 
 BASE = "https://mgu.walle.pw/mgu/cn/"
+BASES = {"stable": BASE, "beta": BASE + "beta/"}
 REPOS = {"mgu-store": "Wallezy/mgu-store-cn", "idrive-apps": "Wallezy/idrive-apps-cn"}
 CONTEXT = "release-check/cn-integration"
 BOOTSTRAP = ("mgu-install.js", "install.sh", "install.ps1")
@@ -215,8 +216,12 @@ def copy_file(source, target):
     shutil.copyfile(source, target)
 
 
-def prepare(store_dir, apps_dir, store_source, apps_source, bootstrap_dir, validation, output):
+def prepare(store_dir, apps_dir, store_source, apps_source, bootstrap_dir, validation, output,
+            channel="stable"):
     """Pending snapshots support local integration; neither state permits publication."""
+    if channel not in BASES:
+        raise ValueError("Unknown CN release channel")
+    base = BASES[channel]
     directories = {"mgu-store": pathlib.Path(store_dir).resolve(), "idrive-apps": pathlib.Path(apps_dir).resolve()}
     archives = {"mgu-store": pathlib.Path(store_source).resolve(), "idrive-apps": pathlib.Path(apps_source).resolve()}
     bootstrap_dir, output = pathlib.Path(bootstrap_dir).resolve(), pathlib.Path(output).absolute()
@@ -253,6 +258,7 @@ def prepare(store_dir, apps_dir, store_source, apps_source, bootstrap_dir, valid
             dest.mkdir()
             result = copy.deepcopy(catalog)
             result["distribution"] = "walle-cn"
+            result["release_channel"] = channel
             for entry in result["components"]:
                 a = entry["artifact"]
                 package = regular(local, a["name"])
@@ -286,14 +292,14 @@ def prepare(store_dir, apps_dir, store_source, apps_source, bootstrap_dir, valid
             copy_file(archives[repo], dest / source_rel)
             (dest / "LICENSE").write_bytes(sources[repo]["LICENSE"])
             records[repo]["source_path"] = repo + "/" + source_rel
-            records[repo]["catalog_url"] = BASE + repo + "/catalog.json"
+            records[repo]["catalog_url"] = base + repo + "/catalog.json"
             write_json(dest / "catalog.json", result)
         for name in (*BOOTSTRAP, "SHA256SUMS"):
             copy_file(bootstrap_dir / name, stage / "bootstrap" / name)
         (stage / "NOTICE.txt").write_text(
             "Wallezy CN distribution; corresponding sources and licenses accompany each catalog.\n"
             "Package/icon bytes are retained; CN catalogs change transport URLs and add a distribution marker.\n"
-            "This local snapshot is not published or installation-ready. The recorded validation is a supplied attestation.\n"
+            "The manifest records the release channel and supplied validation attestation; publication is verified separately.\n"
             "Publication requires independent exact-commit checks, public HTTPS/hash/cache verification and migration/recovery tests.\n",
             encoding="utf-8")
         inventory = []
@@ -303,8 +309,9 @@ def prepare(store_dir, apps_dir, store_source, apps_source, bootstrap_dir, valid
                 immutable = "/packages/" in rel or "/icons/" in rel or "/source/" in rel
                 inventory.append({"path": rel, "size": p.stat().st_size, "sha256": digest(p),
                                   "cache_control": "public, max-age=31536000, immutable" if immutable else "no-cache"})
-        manifest = {"schema": 1, "distribution": "walle-cn", "base_url": BASE,
-                    "status": "prepared-not-published", "installReady": False,
+        manifest = {"schema": 1, "distribution": "walle-cn", "base_url": base,
+                    "release_channel": channel,
+                    "status": "beta-candidate" if channel == "beta" else "prepared-not-published", "installReady": False,
                     "repositories": records, "files": inventory}
         write_json(stage / "cn-manifest.json", manifest)
         # Verify every staged copy before the new output directory becomes visible.
@@ -325,6 +332,7 @@ def main():
     for name in ("store-dir", "apps-dir", "store-source", "apps-source",
                  "bootstrap-dir", "validation", "output"):
         parser.add_argument("--" + name, type=pathlib.Path, required=True)
+    parser.add_argument("--channel", choices=tuple(BASES), default="stable")
     args = parser.parse_args()
     try:
         manifest = prepare(**vars(args))

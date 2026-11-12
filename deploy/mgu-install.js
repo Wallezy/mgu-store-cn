@@ -108,6 +108,7 @@ const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const MAX_ARTIFACT = 512 << 20;
 const CN_BASE = 'https://mgu.walle.pw/mgu/cn/';
+const CN_BASES = { stable: CN_BASE, beta: CN_BASE + 'beta/' };
 /* what the updater reads from a stick (native/mgu-updater/js/sources.js) */
 const STICK_JSON_MAX = 1 << 20;
 const STICK_REPO_MAX = 200 << 20;
@@ -320,7 +321,8 @@ function parseCatalog(text, what) {
         }
         seen.add(e.id);
     });
-    return { commit: typeof c.commit === 'string' ? c.commit : null, components: c.components };
+    return { commit: typeof c.commit === 'string' ? c.commit : null,
+        releaseChannel: c.release_channel || 'stable', components: c.components };
 }
 
 /* ---- SSH ------------------------------------------------------------------------------- */
@@ -828,11 +830,18 @@ async function firstInstall(o) {
     const from = o.from ? fromFolder(o.from) : null;
     const local = from ? dirComponents(from) : null;
     const label = from || STORE_CATALOG;
+    if (local && local.releaseChannel !== 'stable') {
+        throw new Usage('first-install uses Stable; Beta needs the explicit reviewed migration trial');
+    }
     await reach(o);
     if (!(await checkCoding(o))) {
         return 2;
     }
-    const { components } = local || await urlComponents(STORE_CATALOG);
+    const release = local || await urlComponents(STORE_CATALOG);
+    if (release.releaseChannel !== 'stable') {
+        throw new Usage('first-install uses Stable; Beta needs the explicit reviewed migration trial');
+    }
+    const { components } = release;
     const wanted = WITH.filter((w) => !o[w.skip]);
     const chosen = components.filter((c) => !c.entry.optional || wanted.some((w) => w.id === c.entry.id));
     const withs = wanted.filter((w) => chosen.some((c) => c.entry.id === w.id));
@@ -917,7 +926,9 @@ function migrationSnapshot(folder) {
     };
     const raw = regular('cn-manifest.json');
     const manifest = JSON.parse(raw);
-    if (manifest.schema !== 1 || manifest.distribution !== 'walle-cn' || manifest.base_url !== CN_BASE ||
+    const channel = manifest.release_channel || 'stable';
+    if (!Object.prototype.hasOwnProperty.call(CN_BASES, channel) ||
+        manifest.schema !== 1 || manifest.distribution !== 'walle-cn' || manifest.base_url !== CN_BASES[channel] ||
         !Array.isArray(manifest.files) || !manifest.repositories) throw new Usage('invalid CN snapshot manifest');
     const files = new Map();
     manifest.files.forEach((f) => {
@@ -938,6 +949,7 @@ function migrationSnapshot(folder) {
         const catalog = bytes && JSON.parse(bytes);
         if (!record || record.repository !== `Wallezy/${repo}-cn` ||
             !catalog || catalog.schema !== 2 || catalog.distribution !== 'walle-cn' ||
+            (catalog.release_channel || 'stable') !== channel ||
             !/^[a-f0-9]{40}$/.test(catalog.commit || '') || catalog.commit !== record.commit ||
             !Array.isArray(catalog.components)) throw new Usage(`invalid CN ${repo} catalog`);
         catalog.components.forEach((entry) => {
@@ -969,7 +981,7 @@ function migrationSnapshot(folder) {
     if (!runner.some((f) => f.name === 'mgu-deploy.js' && f.data.includes(Buffer.from('edition-migrate')))) {
         throw new Usage('this snapshot deploy tool has no edition migration entrypoint');
     }
-    return { manifest, components, runner, digest: sha256(raw) };
+    return { manifest, channel, components, runner, digest: sha256(raw) };
 }
 function migrationRelease(snapshot, installed) {
     if (!installed || !Array.isArray(installed.components)) throw new Usage('installed component inventory could not be read');
@@ -986,7 +998,7 @@ function migrationRelease(snapshot, installed) {
         });
     }
     const artifacts = snapshot.components.filter((a) => required.has(a.entry.id));
-    return { artifacts, manifest: { schema: 1, distribution: 'walle-cn',
+    return { artifacts, manifest: { schema: 1, distribution: 'walle-cn', release_channel: snapshot.channel,
         installer: sha256(Buffer.from(SOURCE)), snapshot: snapshot.digest,
         components: artifacts.map(({ entry }) => ({
             id: entry.id, version: entry.version, sha256: entry.artifact.sha256, requires: entry.requires || {}
@@ -998,7 +1010,7 @@ async function migrationRuntime(o) {
         'var t=setTimeout(function(){s.destroy();process.exitCode=1;},15000);' +
         's.on(`data`,function(d){b+=d;if(b.length>8388608){s.destroy();process.exitCode=1;return;}' +
         'var n=b.indexOf(String.fromCharCode(10));if(n<0||done)return;var v;try{v=JSON.parse(b.slice(0,n));}catch(e){s.destroy();process.exitCode=1;return;}' +
-        'done=true;clearTimeout(t);console.log(JSON.stringify({updater:v.updater,github:v.github,distribution:v.distribution,' +
+        'done=true;clearTimeout(t);console.log(JSON.stringify({updater:v.updater,github:v.github,distribution:v.distribution,releaseChannel:v.releaseChannel,' +
         'busy:v.busy,components:(v.components||[]).map(function(c){return {id:c.id,installAs:c.installAs,installed:c.installed,source:c.source,queued:c.queued};}),' +
         'sources:(v.sources||[]).map(function(c){return {id:c.id,type:c.type,label:c.label,status:c.status,error:c.error};})}));s.end();});' +
         's.on(`error`,function(){clearTimeout(t);process.exitCode=1;});';
@@ -1013,6 +1025,9 @@ function migrationRuntimeCheck(state, journal) {
     if (state.busy || state.components.some((c) => c.queued)) return 'the updater has running or queued work';
     if (!journal) return null;
     if (state.distribution !== 'walle-cn' || state.github !== false) return 'the running updater is not the CN distribution';
+    const channel = journal.plan && journal.plan.releaseChannel || 'stable';
+    if (!Object.prototype.hasOwnProperty.call(CN_BASES, channel) ||
+        (state.releaseChannel || 'stable') !== channel) return 'the running updater is on another CN release channel';
     for (const step of journal.steps) {
         const rows = state.components.filter((c) => (c.installAs || c.id) === step.id && c.installed);
         if (rows.length !== 1 || rows[0].installed !== step.version) {
@@ -1020,7 +1035,7 @@ function migrationRuntimeCheck(state, journal) {
         }
         const group = ['robertn_waze_cluster', 'waze-on-cluster', 'cluster-render'].includes(step.id) ? 'idrive-apps' : 'mgu-store';
         const source = state.sources.find((s) => s.id === rows[0].source);
-        if (!source || source.type !== 'https' || source.label !== `${CN_BASE}${group}/catalog.json` ||
+        if (!source || source.type !== 'https' || source.label !== `${CN_BASES[channel]}${group}/catalog.json` ||
             source.status !== 'ok' || source.error) return `${step.id}: its managed CN update catalog is not ready`;
     }
     return null;
@@ -1031,13 +1046,22 @@ async function migrateCn(o) {
     }
     if (o.expectPlan && !/^[a-f0-9]{64}$/.test(o.expectPlan)) throw new Usage('invalid expected migration plan');
     const snapshot = migrationSnapshot(o.from);
-    if (!o.planOnly && (snapshot.manifest.installReady !== true ||
+    const channel = o.channel || 'stable';
+    if (!Object.prototype.hasOwnProperty.call(CN_BASES, channel) || snapshot.channel !== channel) {
+        throw new Usage('select the matching CN release channel explicitly; Stable does not consume Beta snapshots');
+    }
+    if (o.expectSnapshot && o.expectSnapshot !== snapshot.digest) throw new Usage('CN snapshot differs from the reviewed SHA-256');
+    if (!o.planOnly && channel === 'beta' && o.expectSnapshot !== snapshot.digest) {
+        throw new Usage('Beta vehicle testing requires --channel beta, --expect-snapshot and the exact --expect-plan');
+    }
+    if (!o.planOnly && channel === 'stable' && (snapshot.manifest.installReady !== true ||
         ['mgu-store', 'idrive-apps'].some((repo) => {
             const r = snapshot.manifest.repositories[repo], s = r.integration;
             return !s || s.context !== 'release-check/cn-integration' || s.state !== 'success' || s.sha !== r.commit;
         }))) {
         throw new Usage('this snapshot is for preparation only; migration integration/publication evidence is missing');
     }
+    if (!o.planOnly && channel === 'beta') say('Beta owner trial: installation does not establish Stable release approval.');
     await reach(o);
     const runtime = await migrationRuntime(o);
     const busy = migrationRuntimeCheck(runtime);
@@ -1461,7 +1485,7 @@ async function publishedFolder(components, commit, label) {
 /* A catalog.json at a URL, artifacts absolute or relative to it. */
 async function urlComponents(url) {
     const catalog = parseCatalog((await get(url, { max: 4 << 20 })).toString('utf8'), url);
-    return { commit: catalog.commit, components: catalog.components.map((entry) => ({ entry,
+    return { commit: catalog.commit, releaseChannel: catalog.releaseChannel, components: catalog.components.map((entry) => ({ entry,
         fetch: () => get(new URL(entry.artifact.url || entry.artifact.name, url).toString(), { max: entry.artifact.size })
             .then((d) => checked(entry.artifact.name, d, entry.artifact.size, entry.artifact.sha256)),
         icon: () => get(new URL(entry.icon, url).toString(), { max: ICON_MAX }) })) };
@@ -1488,7 +1512,7 @@ function dirIcon(dir, ref) {
 /* A folder with catalog.json (a dir: publish): its artifacts read beside it. */
 function dirComponents(dir) {
     const catalog = parseCatalog(fs.readFileSync(path.join(dir, 'catalog.json'), 'utf8'), path.join(dir, 'catalog.json'));
-    return { commit: catalog.commit, components: catalog.components.map((entry) => {
+    return { commit: catalog.commit, releaseChannel: catalog.releaseChannel, components: catalog.components.map((entry) => {
         const rel = (entry.artifact.url || entry.artifact.name).replace(/^\.\//, '');
         if (/^https?:/.test(rel)) {
             return { entry, fetch: () => get(rel, { max: entry.artifact.size }).then((d) => checked(entry.artifact.name, d, entry.artifact.size, entry.artifact.sha256)),
@@ -1618,7 +1642,8 @@ async function usbRepo(o) {
             const name = unique(input === STORE_CATALOG ? 'mgu-store' :
                 folderName(`${u.hostname}-${path.posix.basename(path.posix.dirname(u.pathname)) || 'catalog'}`));
             say(`${input} -> mgu-repo/${name}/`);
-            const { commit, components } = await urlComponents(u.toString());
+            const { commit, components, releaseChannel } = await urlComponents(u.toString());
+            if (releaseChannel !== 'stable') throw new Usage('Beta needs its complete snapshot and explicit migration trial');
             const out = await publishedFolder(components, commit, input);
             writeFolder(path.join(repoDir, name), out.files.concat([copyOf(u.toString())]), out.catalog);
         } else if (fs.existsSync(input) && fs.statSync(input).isDirectory()) {
@@ -1629,7 +1654,8 @@ async function usbRepo(o) {
             const name = unique(folderName(path.basename(dir)));
             say(`${input} -> mgu-repo/${name}/`);
             if (fs.existsSync(path.join(dir, 'catalog.json'))) {
-                const { commit, components } = dirComponents(dir);
+                const { commit, components, releaseChannel } = dirComponents(dir);
+                if (releaseChannel !== 'stable') throw new Usage('Beta needs its complete snapshot and explicit migration trial');
                 const out = await publishedFolder(components, commit, input);
                 writeFolder(path.join(repoDir, name), out.files, out.catalog);
             } else if (fs.existsSync(path.join(dir, 'mgu-repo.json'))) {
@@ -1703,6 +1729,8 @@ function parse(argv) {
         else if (a === '--ssh-opt') o.sshOpts.push(value(++i, a));
         else if (a === '--plan-only' && o.command === 'migrate-cn') o.planOnly = true;
         else if (a === '--expect-plan' && o.command === 'migrate-cn') o.expectPlan = value(++i, a);
+        else if (a === '--channel' && o.command === 'migrate-cn') o.channel = value(++i, a);
+        else if (a === '--expect-snapshot' && o.command === 'migrate-cn') o.expectSnapshot = value(++i, a);
         else if (a === '--transaction' && o.command.startsWith('migration-')) o.transaction = value(++i, a);
         else if (a === '--no-renderer' && o.command === 'first-install') o.noRenderer = true;
         else if (a === '--no-uplink' && o.command === 'first-install') o.noUplink = true;

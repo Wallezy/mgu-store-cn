@@ -29,6 +29,34 @@ test('fresh setup has two HTTPS sources and one builtin', () => {
     assert(rows.every((r) => r.type === 'https' && r.url.startsWith(cn.ROOT)));
     assert.strictEqual(rows.filter((r) => r.builtin).length, 1);
 });
+test('Beta needs explicit selection and preserves installed source identities', () => {
+    const stable = cn.normalize([store, apps, mirror], origins, {});
+    const beta = cn.normalize([store, apps, mirror], origins, {}, 'beta');
+    assert.deepStrictEqual(beta.map((s) => s.id), stable.map((s) => s.id));
+    assert(beta.every((s) => s.url.startsWith(cn.ROOTS.beta)));
+    assert.strictEqual(cn.releaseChannel({}), 'stable');
+    assert.throws(() => cn.normalize([], {}, {}, 'preview'), /unknown/);
+    assert.strictEqual(cn.normalize(beta, origins, {}).length, 2);
+    assert.strictEqual(get(cn.normalize(beta, origins, {}), apps.id).url, cn.ROOT + 'idrive-apps/catalog.json');
+});
+test('Stable and Beta catalogs and resources cannot cross channels', () => {
+    const beta = cn.definition(cn.GROUPS[0], null, 'beta');
+    const value = { mode: 'catalog', distribution: cn.CHANNEL, releaseChannel: 'beta',
+        components: [{ artifact: { url: 'packages/hash/tool.tgz' } }] };
+    assert.strictEqual(cn.validateCatalog(beta, value), value);
+    assert.throws(() => cn.validateCatalog(cn.definition(cn.GROUPS[0]), value), /another release channel/);
+    assert.throws(() => cn.validateCatalog(beta, Object.assign({}, value, { releaseChannel: 'stable' })), /another release channel/);
+    for (const root of [cn.ROOT, 'https://github.com/owner/repo/']) {
+        assert.throws(() => cn.validateCatalog(beta, Object.assign({}, value, {
+            components: [{ artifact: { url: root + 'mgu-store/packages/hash/tool.tgz' } }]
+        })), /HTTPS/);
+    }
+    const rt = { def: beta, distribution: cn.CHANNEL, releaseChannel: 'beta', status: 'ok', answered: true,
+        components: ['mgu-updater', 'mgu-deploy', 'robertn_store'].map((id) =>
+            ({ id, version: '1.0.0', artifact: { sha256: 'a'.repeat(64) } })) };
+    assert(cn.trialReady(rt, '1.0.0', 'beta'));
+    assert(!cn.trialReady(rt, '1.0.0'));
+});
 test('shipped CN configuration does not enable automatic GitHub repositories', () => {
     const prior = process.env.MGU_UPDATER_CONF;
     process.env.MGU_UPDATER_CONF = '/nonexistent-mgu-cn-test.conf';

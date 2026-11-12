@@ -1378,7 +1378,8 @@ function httpsReader(s, ctx) {
             if (doc && doc.schema === undefined && Array.isArray(doc.packages)) {
                 return doc.version === 2 ? fromIndex2(doc) : fromIndex(doc);
             }
-            return Object.assign({ mode: 'catalog', distribution: doc && doc.distribution || null }, catalogLib.parse(text));
+            return Object.assign({ mode: 'catalog', distribution: doc && doc.distribution || null,
+                releaseChannel: doc && doc.release_channel || 'stable' }, catalogLib.parse(text));
         }),
         artifact,
         icon: (entry) => {

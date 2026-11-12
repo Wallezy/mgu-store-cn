@@ -146,6 +146,22 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "new folder"):
             self.run_prepare()
 
+    def test_beta_snapshot_is_separate_without_changing_package_bytes(self):
+        stable = self.run_prepare()
+        target = self.root / "beta"
+        beta = M.prepare(self.dirs["mgu-store"], self.dirs["idrive-apps"],
+                         self.sources["mgu-store"], self.sources["idrive-apps"],
+                         self.bootstrap, self.validation, target, channel="beta")
+        self.assertEqual(beta["release_channel"], "beta")
+        self.assertEqual(beta["base_url"], M.BASES["beta"])
+        self.assertFalse(beta["installReady"])
+        for repo in M.REPOS:
+            self.assertEqual(M.read_json(target / repo / "catalog.json")["release_channel"], "beta")
+            for entry in M.read_json(target / repo / "catalog.json")["components"]:
+                rel = repo + "/" + entry["artifact"]["url"]
+                self.assertEqual(M.digest(target / rel), M.digest(self.output / rel))
+        self.assertNotEqual(beta["base_url"], stable["base_url"])
+
     def test_unmet_cross_repository_dependency(self):
         self.catalogs["idrive-apps"]["components"][-1]["requires"]["mgu-updater"] = "2.0.0"
         self.write_evidence()

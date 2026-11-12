@@ -77,7 +77,7 @@ function assetSha256(tag) {
         const files = fs.readdirSync(dir);
         return files.length === 1 ? crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, files[0]))).digest('hex') : null;
     } catch (e) {
-        return null; // an asset GitHub cannot serve is uploaded again
+        return null; // an unreadable asset cannot be verified or replaced
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -196,8 +196,8 @@ const targets = {
             return assetUrl(asset);
         },
         /* Returns the url the catalog lists the asset under (assetUrl). A
-         * release left by an interrupted publish is completed rather than
-         * created again. The release's one asset is the artifact, whatever
+         * release is reused only when its single asset has the exact expected
+         * bytes; incomplete or differing assets require inspection. The release's one asset is the artifact, whatever
          * name GitHub gave it. Each new release is marked Latest, so a run's
          * last one is the repository's Latest. */
         uploadArtifact(entry, file) {
@@ -210,9 +210,7 @@ const targets = {
                     '--title', `${entry.title} ${entry.version}`, '--notes', entry.description || tag]);
                 release = view();
             } else if (release.assets.length !== 1 || assetSha256(tag) !== entry.artifact.sha256) {
-                release.assets.forEach((a) => gh(['api', '-X', 'DELETE', `repos/${WHERE}/releases/assets/${a.id}`]));
-                gh(['release', 'upload', tag, file, '-R', WHERE]);
-                release = view();
+                throw new Error(`${tag}: published assets are immutable; inspect an incomplete release or use a new component version`);
             }
             const asset = release && release.assets.length === 1 && release.assets[0];
             if (!asset || asset.size !== entry.artifact.size) {
