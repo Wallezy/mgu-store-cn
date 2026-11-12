@@ -7336,10 +7336,29 @@ function editionOldPackage(a, stage) {
         var file = keptFile(a.id, app.version);
         if (!fs.existsSync(file)) file = path.join(preinstalledDir(), a.id + '@' + app.version + '.tgz');
         old = validateArtifact(file, stage);
-        if (old.kind !== 'app' || old.id !== a.id || old.version !== app.version || old.prepare || !editionMatches(old)) {
+        if (old.kind !== 'app' || old.id !== a.id || old.version !== app.version) {
             throw refuse(a.id + ': no verified package of the actual installed app for recovery');
         }
-        return old.file;
+        var source = path.join(appHome(app.uid), 'source'), fingerprint = editionTree(source);
+        var actual = walk(source, '', []).filter(function (e) {
+            if (e.stat.isSymbolicLink()) {
+                /* MainApp supplies these system modules again at installation. */
+                if (/^node_modules\/[A-Za-z0-9_-]+\.node$/.test(e.rel) &&
+                    fs.readlinkSync(e.path) === '/usr/lib/' + path.basename(e.rel) &&
+                    statOrNull(e.path) && statOrNull(e.path).isFile()) return false;
+                throw refuse(a.id + ': application recovery cannot reproduce link ' + e.rel);
+            }
+            return e.stat.isFile();
+        }).map(function (e) {
+            return { name: e.rel, data: fs.readFileSync(e.path), mode: e.stat.mode & 0o7777 };
+        });
+        var savedApp = path.join(stage, 'before-' + a.id + '.tgz');
+        writeAtomic(savedApp, require(selfFile('oap_pack.js')).tgz(actual, 0), 0o600);
+        var restoredApp = validateArtifact(savedApp, stage);
+        if (editionTree(source) !== fingerprint || restoredApp.prepare || !editionMatches(restoredApp)) {
+            throw refuse(a.id + ': actual installed app cannot be recovered without transformation');
+        }
+        return savedApp;
     }
     tool = installedTools().filter(function (t) { return t.id === a.id; })[0];
     if (!tool) return null;

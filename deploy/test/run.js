@@ -9793,7 +9793,8 @@ function testEditionMigration() {
     const preservedTool = mixed.p('var/opt/fixture-tool/current/lib/helper.js');
     const originalTool = fs.readFileSync(preservedTool);
     const moduleTarget = mixed.p('usr/lib/fixture-native.node');
-    const nativeLink = path.join(mixed.home(app(mixed).uid), 'source/native.node');
+    const thirdPartyUid = mixed.status().components.find((c) => c.id === 'third_party').uid;
+    const nativeLink = path.join(mixed.home(thirdPartyUid), 'source/native.node');
     write(moduleTarget, 'native module');
     fs.symlinkSync(moduleTarget, nativeLink);
     const mixedPlan = jsonLast(plan(mixed));
@@ -9829,6 +9830,22 @@ function testEditionMigration() {
     r = plan(mixed);
     check('edition: preserved components with unsatisfied dependencies block migration',
         r.status === 2 && r.out.includes('preserved component dependency'), r.out);
+
+    const live = donorRoot();
+    live.run(['install', '--artifact', old, '--yes']);
+    const liveLabel = path.join(live.home(app(live).uid), 'source/label.txt');
+    write(liveLabel, 'actual installed label');
+    const livePlan = jsonLast(plan(live));
+    check('edition: recovery captures actual installed bytes when kept package differs', livePlan.ready);
+    r = live.run(['edition-migrate', '--expect-plan', livePlan.id, '--yes'].concat(options));
+    check('edition: actual-payload recovery permits a validated migration', r.status === 0, r.out);
+    r = live.run(['edition-rollback', livePlan.id, '--yes']);
+    check('edition: rollback restores actual installed bytes, not stale kept bytes',
+        r.status === 0 && fs.readFileSync(liveLabel, 'utf8') === 'actual installed label', r.out);
+    fs.symlinkSync(liveLabel, path.join(live.home(app(live).uid), 'source/unsupported-link'));
+    r = plan(live);
+    check('edition: recovery refuses application links it cannot reproduce',
+        r.status === 2 && r.out.includes('cannot reproduce link'), r.out);
 
     root = donorRoot();
     root.run(['install', '--artifact', old, '--yes']);
