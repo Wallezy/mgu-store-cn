@@ -9576,8 +9576,87 @@ function testMguInstallTiles() {
     }
 }
 
+function testEditionMigration() {
+    const id = 'robertn_waze_cluster';
+    const old = sourceArtifact('1.2.3', { id }, { 'label.txt': 'old text' });
+    const target = sourceArtifact('1.2.3', { id }, { 'label.txt': '中文页面' });
+    const manifest = path.join(T, 'edition-manifest.json');
+    write(manifest, JSON.stringify({ schema: 1, distribution: 'walle-cn', installer: 'a'.repeat(64),
+        components: [{ id, version: '1.2.3', sha256: sha256(fs.readFileSync(target)), requires: {} }] }));
+    const options = ['--artifact', target, '--distribution-manifest', manifest];
+    const jsonLast = (r) => {
+        try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch (e) { return {}; }
+    };
+    const plan = (root) => root.run(['edition-plan'].concat(options));
+    const app = (root) => root.status().components.find((c) => c.id === id);
+    const settings = (root) => path.join(root.home(app(root).uid), 'data/settings.json');
+    let root = donorRoot();
+    let r = root.run(['install', '--artifact', old, '--yes']);
+    check('edition: fixture installs old app', r.status === 0, r.out);
+    write(settings(root), '{"display":"hud","profile":"personal"}');
+    const before = root.hash();
+    r = plan(root);
+    const p = jsonLast(r);
+    check('edition: plan compiles the candidate and names a same-version replacement', r.status === 0 &&
+        p.ready && p.plan.steps[0].action === 'replace-app' && /^[a-f0-9]{64}$/.test(p.id), r.out);
+    check('edition: planning changes no installed data', root.hash().hash === before.hash, treeDiff(before, root.hash()));
+    r = root.run(['edition-migrate', '--expect-plan', '0'.repeat(64), '--yes'].concat(options));
+    check('edition: stale plan is refused without an uninstall', r.status === 2 &&
+        r.out.includes('plan changed') && !r.out.includes('uninstalling app'), r.out);
+    r = root.run(['install', '--artifact', target, '--yes']);
+    check('edition: ordinary same-version install still skips replacement', r.status === 0 &&
+        r.out.includes('already installed; nothing to change') &&
+        fs.readFileSync(path.join(root.home(app(root).uid), 'source/label.txt'), 'utf8') === 'old text', r.out);
+    const currentPlan = jsonLast(plan(root));
+    r = root.run(['edition-migrate', '--expect-plan', currentPlan.id, '--yes'].concat(options));
+    check('edition: explicit migration installs Chinese bytes at the same version', r.status === 0 &&
+        jsonLast(r).phase === 'awaiting-verification' &&
+        app(root).version === '1.2.3' &&
+        fs.readFileSync(path.join(root.home(app(root).uid), 'source/label.txt'), 'utf8') === '中文页面', r.out);
+    check('edition: app data survives the manager reinstall', fs.readFileSync(settings(root), 'utf8') ===
+        '{"display":"hud","profile":"personal"}');
+    const journalFile = root.p(`var/opt/mgu-deploy/edition-migrations/${currentPlan.id}/journal.json`);
+    const j = readJson(journalFile), saved = root.p(`var/opt/mgu-deploy/edition-migrations/${j.id}/before/${id}.tgz`);
+    check('edition: same-version old payload has an independent durable copy', sha256(fs.readFileSync(saved)) === j.steps[0].recovery &&
+        sha256(fs.readFileSync(saved)) !== sha256(fs.readFileSync(root.p(`var/opt/mgu-deploy/kept/${id}/${id}@1.2.3.tgz`))));
+    r = root.run(['install', '--artifact', toolArtifact('0.2.0'), '--yes']);
+    check('edition: pending verification blocks another write', r.status === 2 && r.out.includes('unfinished edition migration'), r.out);
+    const verify = root.run(['edition-verify', j.id]);
+    check('edition: verify records local content, without claiming online updates', verify.status === 0 &&
+        jsonLast(verify).phase === 'verified' && jsonLast(verify).onlineUpdateVerified === false, verify.out);
+    r = root.run(['edition-rollback', j.id, '--yes']);
+    check('edition: explicit rollback restores old bytes and retains settings', r.status === 0 &&
+        fs.readFileSync(path.join(root.home(app(root).uid), 'source/label.txt'), 'utf8') === 'old text' &&
+        fs.readFileSync(settings(root), 'utf8') === '{"display":"hud","profile":"personal"}', r.out);
+    check('edition: rollback does not overwrite the independent old package', sha256(fs.readFileSync(saved)) === j.steps[0].recovery);
+    r = root.run(['edition-rollback', j.id, '--yes']);
+    check('edition: repeated rollback is a no-op', r.status === 0 && !r.out.includes('uninstalling'), r.out);
+
+    root = donorRoot();
+    root.run(['install', '--artifact', old, '--yes']);
+    write(settings(root), '{"volume":7}');
+    const badPlan = jsonLast(plan(root));
+    r = root.run(['edition-migrate', '--expect-plan', badPlan.id, '--yes'].concat(options), { FAKE_MGR_REJECT: '1' });
+    check('edition: failed replacement and failed old-package install report recovery-needed', r.status === 1 &&
+        jsonLast(root.run(['edition-status', badPlan.id])).phase === 'recovery-needed', r.out);
+    r = root.run(['edition-rollback', badPlan.id, '--yes']);
+    check('edition: recovery after the manager becomes available restores data and old app', r.status === 0 &&
+        fs.readFileSync(settings(root), 'utf8') === '{"volume":7}' &&
+        fs.readFileSync(path.join(root.home(app(root).uid), 'source/label.txt'), 'utf8') === 'old text', r.out);
+
+    const bare = fakeRoot();
+    const unprepared = plan(bare);
+    check('edition: missing donor refuses before replacing anything', unprepared.status === 2 &&
+        unprepared.out.includes('cannot build'), unprepared.out);
+    const eight = id8Root();
+    const eightPlan = plan(eight);
+    check('edition: ID8 same-version migration is not guessed', eightPlan.status === 2 &&
+        eightPlan.out.includes('ID7 only'), eightPlan.out);
+}
+
 // MGU_TEST_ONLY=<name>,...: only those test functions
 const SUITES = [
+    testEditionMigration,
     testArtifact,
     testSelf,
     testRefusals,

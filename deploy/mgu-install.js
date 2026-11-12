@@ -9,6 +9,11 @@
  *   node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [--no-restart-prompt] [<ssh options>]
  *   node mgu-install.js uninstall [--yes] [--from <folder>] [--no-restart-prompt] [<ssh options>]
  *   node mgu-install.js status [<ssh options>]
+ *   node mgu-install.js migrate-cn --from <CN snapshot> --plan-only [<ssh options>]
+ *   node mgu-install.js migrate-cn --from <CN snapshot> --expect-plan <sha256> [<ssh options>]
+ *   node mgu-install.js migration-status --transaction <sha256> [<ssh options>]
+ *   node mgu-install.js migration-verify --transaction <sha256> [<ssh options>]
+ *   node mgu-install.js migration-rollback --transaction <sha256> --yes [<ssh options>]
  *   node mgu-install.js usb-repo <stick folder> [<input>...]
  *
  * first-install downloads the published CN catalog's mgu-store release (the
@@ -97,6 +102,7 @@ const DEPLOY = '/var/opt/mgu-deploy/mgu-deploy.sh';
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const MAX_ARTIFACT = 512 << 20;
+const CN_BASE = 'https://mgu.walle.pw/mgu/cn/';
 /* what the updater reads from a stick (native/mgu-updater/js/sources.js) */
 const STICK_JSON_MAX = 1 << 20;
 const STICK_REPO_MAX = 200 << 20;
@@ -833,6 +839,155 @@ async function firstInstall(o) {
     return offerRestart(o);
 }
 
+/* One verified local snapshot binds bootstrap, both catalogs and all package
+ * bytes. No catalog or download URL is followed while preparing a migration. */
+function migrationSnapshot(folder) {
+    if (SOURCE === null) throw new Usage('migration requires the verified installer saved as a local file');
+    const root = path.resolve(folder);
+    const regular = (name) => {
+        if (typeof name !== 'string' || !name || /[\\:%?#]/.test(name) ||
+            name.split('/').some((p) => !p || p === '.' || p === '..')) {
+            throw new Usage(`unsafe CN snapshot path: ${name}`);
+        }
+        let p = root;
+        for (const part of name.split('/')) {
+            p = path.join(p, part);
+            if (fs.lstatSync(p).isSymbolicLink()) throw new Usage(`linked CN snapshot file: ${name}`);
+        }
+        const st = fs.statSync(p);
+        if (!st.isFile() || st.size > MAX_ARTIFACT) throw new Usage(`invalid CN snapshot file: ${name}`);
+        return fs.readFileSync(p);
+    };
+    const raw = regular('cn-manifest.json');
+    const manifest = JSON.parse(raw);
+    if (manifest.schema !== 1 || manifest.distribution !== 'walle-cn' || manifest.base_url !== CN_BASE ||
+        !Array.isArray(manifest.files) || !manifest.repositories) throw new Usage('invalid CN snapshot manifest');
+    const files = new Map();
+    manifest.files.forEach((f) => {
+        if (!f || files.has(f.path) || !Number.isSafeInteger(f.size) || f.size < 1 ||
+            !/^[a-f0-9]{64}$/.test(f.sha256 || '')) throw new Usage('invalid CN snapshot inventory');
+        const data = regular(f.path);
+        checked(f.path, data, f.size, f.sha256);
+        files.set(f.path, data);
+    });
+    if (!files.has('bootstrap/mgu-install.js') || !files.get('bootstrap/mgu-install.js').equals(Buffer.from(SOURCE))) {
+        throw new Usage('run the installer belonging to this exact CN snapshot');
+    }
+    const components = [];
+    const ids = new Set();
+    for (const repo of ['mgu-store', 'idrive-apps']) {
+        const record = manifest.repositories[repo];
+        const bytes = files.get(`${repo}/catalog.json`);
+        const catalog = bytes && JSON.parse(bytes);
+        if (!record || record.repository !== `Wallezy/${repo}-cn` ||
+            !catalog || catalog.schema !== 2 || catalog.distribution !== 'walle-cn' ||
+            !/^[a-f0-9]{40}$/.test(catalog.commit || '') || catalog.commit !== record.commit ||
+            !Array.isArray(catalog.components)) throw new Usage(`invalid CN ${repo} catalog`);
+        catalog.components.forEach((entry) => {
+            if (!entry || !ID.test(entry.id || '') || ids.has(entry.id) || !SEMVER.test(entry.version || '') ||
+                !['app', 'tool'].includes(entry.kind) || (entry.kind === 'app' && entry.build !== 'unit')) {
+                throw new Usage('invalid or duplicate CN component');
+            }
+            ids.add(entry.id);
+            const a = entry.artifact;
+            if (!a || a.name !== `${entry.id}@${entry.version}.tgz` ||
+                a.url !== `packages/${a.sha256}/${a.name}`) throw new Usage(`invalid package path: ${entry.id}`);
+            const data = files.get(`${repo}/${a.url}`);
+            if (!data) throw new Usage(`missing migration package: ${entry.id}`);
+            checked(a.name, data, a.size, a.sha256);
+            components.push({ entry, data });
+        });
+    }
+    for (const id of ['robertn_store', 'mgu-updater', 'mgu-deploy', 'mgu-python', 'app-privacy', 'mgu-render', 'mgu-uplink']) {
+        if (!ids.has(id)) throw new Usage(`CN snapshot lacks ${id}`);
+    }
+    const resolved = new Map(components.map((c) => [c.entry.id, c.entry]));
+    components.forEach(({ entry }) => Object.entries(entry.requires || {}).forEach(([id, minimum]) => {
+        if (!SEMVER.test(minimum) || !resolved.has(id) || compareVersions(resolved.get(id).version, minimum) < 0) {
+            throw new Usage(`unmet CN dependency: ${entry.id} -> ${id}`);
+        }
+    }));
+    const deploy = components.find((c) => c.entry.id === 'mgu-deploy');
+    const runner = deployToolFiles(deploy.data);
+    if (!runner.some((f) => f.name === 'mgu-deploy.js' && f.data.includes(Buffer.from('edition-migrate')))) {
+        throw new Usage('this snapshot deploy tool has no edition migration entrypoint');
+    }
+    return { manifest, components, runner, digest: sha256(raw) };
+}
+function migrationRelease(snapshot, installed) {
+    if (!installed || !Array.isArray(installed.components)) throw new Usage('installed component inventory could not be read');
+    const required = new Set(['robertn_store', 'mgu-updater', 'mgu-deploy', 'mgu-python', 'app-privacy']);
+    installed.components.forEach((c) => required.add(c.id));
+    let more = true;
+    while (more) {
+        more = false;
+        snapshot.components.forEach(({ entry }) => {
+            if (!required.has(entry.id)) return;
+            Object.keys(entry.requires || {}).forEach((id) => {
+                if (!required.has(id)) { required.add(id); more = true; }
+            });
+        });
+    }
+    const artifacts = snapshot.components.filter((a) => required.has(a.entry.id));
+    return { artifacts, manifest: { schema: 1, distribution: 'walle-cn',
+        installer: sha256(Buffer.from(SOURCE)), snapshot: snapshot.digest,
+        components: artifacts.map(({ entry }) => ({
+            id: entry.id, version: entry.version, sha256: entry.artifact.sha256, requires: entry.requires || {}
+        })) } };
+}
+async function migrateCn(o) {
+    if (!o.from || !!o.planOnly === !!o.expectPlan) {
+        throw new Usage('migrate-cn needs --from and exactly one of --plan-only or --expect-plan');
+    }
+    if (o.expectPlan && !/^[a-f0-9]{64}$/.test(o.expectPlan)) throw new Usage('invalid expected migration plan');
+    const snapshot = migrationSnapshot(o.from);
+    if (!o.planOnly && (snapshot.manifest.installReady !== true ||
+        ['mgu-store', 'idrive-apps'].some((repo) => {
+            const r = snapshot.manifest.repositories[repo], s = r.integration;
+            return !s || s.context !== 'release-check/cn-integration' || s.state !== 'success' || s.sha !== r.commit;
+        }))) {
+        throw new Usage('this snapshot is for preparation only; migration integration/publication evidence is missing');
+    }
+    await reach(o);
+    // A staged copy supplies a known read-only status implementation even when
+    // the installed wrapper predates --read-only; it is not installed here.
+    const stage = `/var/opt/mgu-deploy-kit-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    const q = shQuote(stage), staged = snapshot.runner;
+    let status;
+    try {
+        const upload = ssh(o, unpackKit(q), { input: tgz(staged, 0) });
+        if (upload.status) return 1;
+        status = ssh(o, `sh ${q}/mgu-deploy.sh status --read-only --json`, { input: Buffer.alloc(0), capture: true });
+        const installed = status.status === 0 ? lastJson(status.stdout) : null;
+        const release = migrationRelease(snapshot, installed);
+        const entries = release.artifacts.map((a) => ({
+            name: `artifacts/${a.entry.artifact.name}`, data: a.data, mode: 0o600
+        })).concat([{ name: 'migration.json', data: Buffer.from(JSON.stringify(release.manifest)), mode: 0o600 }]);
+        const send = ssh(o, `umask 077; tar -xzf - -C ${q}`, { input: tgz(entries, 0) });
+        if (send.status) return 1;
+        const command = o.planOnly ? 'edition-plan' : 'edition-migrate';
+        const args = release.artifacts.map((a) => ` --artifact ${q}/artifacts/${shQuote(a.entry.artifact.name)}`).join('');
+        const remote = `sh ${q}/mgu-deploy.sh ${command} --distribution-manifest ${q}/migration.json${args}` +
+            (o.planOnly ? ' --json' : ` --expect-plan ${o.expectPlan} --yes`);
+        const result = ssh(o, remote, { input: Buffer.alloc(0), capture: true });
+        process.stdout.write(result.stdout);
+        if (!o.planOnly) say('Migration content must be verified after any required normal restart; online updates remain a separate check.');
+        return result.status;
+    } finally {
+        ssh(o, `rm -rf ${q}`, { input: Buffer.alloc(0) });
+    }
+}
+async function migrationCommand(o) {
+    if (!/^[a-f0-9]{64}$/.test(o.transaction || '')) throw new Usage('migration command needs --transaction <sha256>');
+    if (o.command === 'migration-rollback' && !o.yes) throw new Usage('migration-rollback requires --yes');
+    await reach(o);
+    const runner = `/var/opt/mgu-deploy/edition-migrations/${o.transaction}/runner/mgu-deploy.sh`;
+    const verb = { 'migration-status': 'edition-status', 'migration-verify': 'edition-verify',
+        'migration-rollback': 'edition-rollback' }[o.command];
+    return ssh(o, `sh ${shQuote(runner)} ${verb} ${o.transaction}${o.yes ? ' --yes' : ''}`,
+        { input: Buffer.alloc(0) }).status;
+}
+
 /* From the deploy tool's status --json, whether our apps' tiles show on an
  * iDrive 7 unit: they do once the running app manager runs the fallback
  * copy, and a restart brings that while the fallback is on. why: the
@@ -1391,11 +1546,14 @@ function parse(argv) {
         else if (a === '--user') o.user = value(++i, a);
         else if (a === '--identity') o.identity = value(++i, a);
         else if (a === '--ssh-opt') o.sshOpts.push(value(++i, a));
+        else if (a === '--plan-only' && o.command === 'migrate-cn') o.planOnly = true;
+        else if (a === '--expect-plan' && o.command === 'migrate-cn') o.expectPlan = value(++i, a);
+        else if (a === '--transaction' && o.command.startsWith('migration-')) o.transaction = value(++i, a);
         else if (a === '--no-renderer' && o.command === 'first-install') o.noRenderer = true;
         else if (a === '--no-uplink' && o.command === 'first-install') o.noUplink = true;
         else if (a === '--no-restart-prompt' && ['first-install', 'uninstall'].includes(o.command)) o.noRestartPrompt = true;
-        else if (a === '--from' && ['first-install', 'uninstall'].includes(o.command)) o.from = value(++i, a);
-        else if (a === '--yes' && o.command === 'uninstall') o.yes = true;
+        else if (a === '--from' && ['first-install', 'uninstall', 'migrate-cn'].includes(o.command)) o.from = value(++i, a);
+        else if (a === '--yes' && ['uninstall', 'migration-rollback'].includes(o.command)) o.yes = true;
         else if (a.startsWith('--')) throw new Usage(`unknown option ${a} for ${o.command}\n${USAGE}`);
         else o.rest.push(a);
     }
@@ -1419,11 +1577,13 @@ async function main(argv) {
     if (Number(process.versions.node.split('.')[0]) < 18) {
         throw new Usage(`Node 18 or newer is needed (this is ${process.version})`);
     }
-    if (['first-install', 'uninstall', 'status'].includes(o.command)) {
+    if (['first-install', 'uninstall', 'status', 'migrate-cn', 'migration-status', 'migration-verify', 'migration-rollback'].includes(o.command)) {
         if (o.rest.length) {
             throw new Usage(`${o.command} takes no ${o.rest[0]}`);
         }
-        return { 'first-install': firstInstall, uninstall, status: statusCommand }[o.command](o);
+        return { 'first-install': firstInstall, uninstall, status: statusCommand, 'migrate-cn': migrateCn,
+            'migration-status': migrationCommand, 'migration-verify': migrationCommand,
+            'migration-rollback': migrationCommand }[o.command](o);
     }
     if (o.command === 'usb-repo') {
         if (!o.rest.length) {
@@ -1443,6 +1603,7 @@ if (require.main === module || FROM_STDIN) {
     });
 }
 
-module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, updaterPackageIdentity, updaterCompatibility, SETUP_INSTALLED,
+module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, updaterPackageIdentity, updaterCompatibility,
+    migrationSnapshot, migrationRelease, SETUP_INSTALLED,
     sshBanner, enetInterfaces, hsfzFrame, hsfzFrames,
     didAddress, hsfzGateway, hsfzHuAddress, findUnit, reach, tilesShow, STATUS_HAS };

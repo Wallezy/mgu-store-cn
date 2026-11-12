@@ -4759,13 +4759,14 @@ function settleStashes(state) {
  * app's record at version, with its kept package, so the next start
  * installs it again, and the data folder: carried over when the app is
  * installed, else recorded (data_stash) for that install. */
-function reinstallApp(app, file, again, version) {
+function reinstallApp(app, file, again, version, rememberStash) {
     var id = app.id;
     /* beside the homes: the same filesystem as the data folder */
     var data = path.join(appHome(app.uid), 'data'), stash = path.join(CFG.oap, '.mgu-deploy-data-' + id + '-' + process.pid), n = 1;
     /* a name of its own beside the folders kept from earlier runs */
     while (lstatOrNull(stash)) stash = path.join(CFG.oap, '.mgu-deploy-data-' + id + '-' + process.pid + '-' + n++);
     var oldGid = (lstatOrNull(data) || {}).gid;
+    if (rememberStash) rememberStash({ path: stash, uid: app.uid, gid: oldGid });
     if (fs.existsSync(data)) fs.renameSync(data, stash);
     var putBack = function () {
         if (!carryData(id, stash, app.uid, oldGid, true)) keepStash(id, stash, app.uid, oldGid);
@@ -7095,6 +7096,420 @@ function cmdSdkDonor(args) {
 
 /* ---- commands ----------------------------------------------------------------- */
 
+/* Edition migration keeps its own payloads: kept/<id>@<version> cannot hold
+ * both sides of a same-version replacement. The plan binds the live contents
+ * and incoming archives; ordinary install keeps its same-version semantics. */
+var EDITION_DIR = path.join(DEPLOY_DIR, 'edition-migrations');
+var EDITION_ACTIVE = path.join(EDITION_DIR, 'active.json');
+var EDITION_IDS = ['robertn_store', 'robertn_waze_cluster', 'mgu-deploy', 'mgu-updater',
+    'mgu-python', 'mgu-render', 'mgu-uplink', 'app-privacy', 'cluster-render', 'waze-on-cluster'];
+function editionId(value) {
+    if (!/^[a-f0-9]{64}$/.test(value || '')) throw refuse('migration needs an exact SHA-256 plan id');
+    return value;
+}
+function editionPending() {
+    if (!lstatOrNull(EDITION_ACTIVE)) return null;
+    var active = readJsonOrNull(EDITION_ACTIVE);
+    return active && /^[a-f0-9]{64}$/.test(active.id || '') ? active.id : 'invalid migration record';
+}
+function editionWrite(journal) {
+    writeAtomic(path.join(EDITION_DIR, editionId(journal.id), 'journal.json'), JSON.stringify(journal, null, 2) + '\n', 0o600);
+}
+function editionRead(id) {
+    id = editionId(id);
+    var journal = readJsonOrNull(path.join(EDITION_DIR, id, 'journal.json'));
+    if (!journal || journal.schema !== 1 || journal.id !== id || !Array.isArray(journal.steps) ||
+        !journal.plan || !journal.steps.every(function (s) {
+            return s && EDITION_IDS.indexOf(s.id) >= 0 && /^[a-f0-9]{64}$/.test(s.prepared || '') &&
+                (s.recovery === null || /^[a-f0-9]{64}$/.test(s.recovery || ''));
+        })) {
+        throw refuse('no readable migration record for ' + id);
+    }
+    return journal;
+}
+function editionTree(dir) {
+    if (!lstatOrNull(dir)) return null;
+    return sha256Buf(Buffer.from(walk(dir, '', []).map(function (e) {
+        if (e.stat.isSymbolicLink() || (!e.stat.isFile() && !e.stat.isDirectory())) {
+            throw refuse('unsupported object in migration payload: ' + e.path);
+        }
+        return [e.rel, e.stat.mode & 0o7777, e.stat.isFile() ? sha256File(e.path) : 'directory'].join(':');
+    }).sort().join('\n')));
+}
+function editionSources() {
+    var result = {};
+    ['sources.json', 'state/origins.json', 'state/aliases.json', 'updater.local.conf'].forEach(function (name) {
+        var p = path.join(updaterDir(), name), st = lstatOrNull(p);
+        if (st && !st.isFile()) throw refuse('migration source state is not a regular file: ' + name);
+        result[name] = st ? sha256File(p) : null;
+    });
+    return result;
+}
+function editionCurrent(id) {
+    var app = installedApp(id), tool = installedTools().filter(function (t) { return t.id === id; })[0];
+    if (app && tool) throw refuse('ambiguous installed identity: ' + id);
+    if (app) return { kind: 'app', version: app.version, uid: app.uid,
+        content: editionTree(path.join(appHome(app.uid), 'source')) };
+    if (lstatOrNull(appEntryFile(id))) throw refuse('unreadable installed app: ' + id);
+    if (tool) return { kind: 'tool', version: tool.version, content: editionTree(path.join(tool.root, 'current')) };
+    if (lstatOrNull(path.join(CFG.varOpt, id, 'current'))) throw refuse('unreadable installed tool: ' + id);
+    return null;
+}
+function editionMatches(a) {
+    var now = editionCurrent(a.id);
+    if (!now || now.version !== a.version || now.kind !== a.kind) return false;
+    if (a.kind === 'app') {
+        var app = installedApp(a.id), dir = path.join(appHome(app.uid), 'source');
+        return walk(a.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); }).every(function (e) {
+            var p = path.join(dir, e.rel), st = lstatOrNull(p);
+            return st && st.isFile() && sha256File(p) === sha256File(e.path);
+        });
+    }
+    var root = path.join(CFG.varOpt, a.id, 'current');
+    return bytesEqualFile(fs.readFileSync(path.join(a.dir, 'component.json')), path.join(root, 'component.json')) &&
+        a.component.files.every(function (f) {
+            var p = path.join(root, f.path), st = lstatOrNull(p);
+            return st && st.isFile() && (st.mode & 0o7777) === octalMode(f.mode) && sha256File(p) === f.sha256;
+        });
+}
+function editionOldPackage(a, stage) {
+    var app = installedApp(a.id), tool, old;
+    if (app) {
+        var file = keptFile(a.id, app.version);
+        if (!fs.existsSync(file)) file = path.join(preinstalledDir(), a.id + '@' + app.version + '.tgz');
+        old = validateArtifact(file, stage);
+        if (old.kind !== 'app' || old.id !== a.id || old.version !== app.version || old.prepare || !editionMatches(old)) {
+            throw refuse(a.id + ': no verified package of the actual installed app for recovery');
+        }
+        return old.file;
+    }
+    tool = installedTools().filter(function (t) { return t.id === a.id; })[0];
+    if (!tool) return null;
+    old = keptToolArtifact(tool);
+    if (!old || !editionMatches(old)) throw refuse(a.id + ': the installed tool differs from its kept recovery payload');
+    var entries = walk(old.dir, '', []).filter(function (e) { return e.stat.isFile(); }).map(function (e) {
+        return { name: e.rel, data: fs.readFileSync(e.path), mode: e.stat.mode & 0o7777 };
+    });
+    tool.component.files.forEach(function (f) {
+        entries.push({ name: 'files/' + f.path, data: fs.readFileSync(path.join(tool.root, 'current', f.path)),
+            mode: octalMode(f.mode) });
+    });
+    (tool.component.units || []).forEach(function (u) {
+        if (!bytesEqualFile(fs.readFileSync(path.join(old.dir, 'units', u.name)), path.join(CFG.systemd, u.name))) {
+            throw refuse(a.id + ': installed unit differs from its recovery copy: ' + u.name);
+        }
+    });
+    (tool.component.dropins || []).forEach(function (d) {
+        if (!bytesEqualFile(fs.readFileSync(path.join(old.dir, 'dropins', d.unit + '.d', d.name)), dropinPath(d))) {
+            throw refuse(a.id + ': installed drop-in differs from its recovery copy');
+        }
+    });
+    entries.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+    var out = path.join(stage, 'before-' + a.id + '.tgz');
+    writeAtomic(out, require(selfFile('oap_pack.js')).tgz(entries, 0), 0o600);
+    validateArtifact(out, stage);
+    return out;
+}
+function editionPresentationOnly(a) {
+    if (a.id !== 'waze-on-cluster' || a.kind !== 'tool') return false;
+    var old = readJsonOrNull(path.join(CFG.varOpt, a.id, 'current', 'component.json'));
+    if (!old || old.version !== a.version) return false;
+    function declaration(c) {
+        c = JSON.parse(JSON.stringify(c));
+        c.files.forEach(function (f) { if (f.path === 'logs.js') f.sha256 = 'presentation'; });
+        return JSON.stringify(c);
+    }
+    return declaration(old) === declaration(a.component) &&
+        a.component.files.some(function (f) { return f.path === 'logs.js'; });
+}
+function editionPrepare(args, stage) {
+    if (unitInfo().hmi !== 'ID7') throw refuse('edition migration currently supports ID7 only');
+    if (!args.artifacts.length) throw refuse('edition migration requires explicit artifacts');
+    if (!managerPid() || guardWhy()) throw refuse('edition migration requires a healthy running app manager');
+    var release = readJsonOrNull(args.distributionManifest || '');
+    if (!release || release.schema !== 1 || release.distribution !== 'walle-cn' ||
+        !/^[a-f0-9]{64}$/.test(release.installer || '') || !Array.isArray(release.components)) {
+        throw refuse('migration requires a verified distribution manifest');
+    }
+    var declared = {};
+    release.components.forEach(function (c) {
+        if (!c || EDITION_IDS.indexOf(c.id) < 0 || declared[c.id] || !semverParts(c.version) ||
+            !/^[a-f0-9]{64}$/.test(c.sha256 || '')) throw refuse('invalid migration manifest component');
+        declared[c.id] = c;
+    });
+    var seen = {}, artifacts = args.artifacts.map(function (file) {
+        var a = validateArtifact(path.resolve(file), stage), why = incompatible(a);
+        if (seen[a.id] || EDITION_IDS.indexOf(a.id) < 0) throw refuse('unsupported or duplicate migration component: ' + a.id);
+        seen[a.id] = true;
+        if (why) throw refuse(why);
+        var incoming = sha256File(a.file);
+        var c = declared[a.id];
+        if (!c || c.version !== a.version || c.sha256 !== incoming) throw refuse('artifact differs from migration manifest: ' + a.id);
+        if (a.kind === 'app') a = prepareApp(a, stage);
+        a.incoming = incoming;
+        return a;
+    }), steps = [], blocked = [];
+    if (Object.keys(seen).length !== Object.keys(declared).length) throw refuse('migration manifest has missing packages');
+    /* The manifest carries app release requirements as well as native ones. */
+    var ordered = [], visiting = {}, complete = {};
+    function visit(id) {
+        if (visiting[id]) throw refuse('cyclic migration dependencies: ' + id);
+        if (complete[id]) return;
+        visiting[id] = true;
+        var a = artifacts.filter(function (v) { return v.id === id; })[0], needs = declared[id].requires || {};
+        Object.keys(needs).sort().forEach(function (dep) {
+            if (!semverParts(needs[dep])) throw refuse('invalid migration dependency: ' + dep);
+            var version = declared[dep] ? declared[dep].version : (editionCurrent(dep) || {}).version;
+            if (!version || semverCmp(version, needs[dep]) < 0) throw refuse('unsatisfied migration dependency: ' + id + ' -> ' + dep);
+            if (declared[dep]) visit(dep);
+        });
+        delete visiting[id]; complete[id] = true; ordered.push(a);
+    }
+    Object.keys(declared).sort().forEach(visit);
+    artifacts = ordered;
+    artifacts.forEach(function (a) {
+        var before = editionCurrent(a.id), action = 'install', problem = null;
+        if (!before && ['mgu-deploy', 'mgu-updater', 'robertn_store'].indexOf(a.id) >= 0) {
+            problem = 'maintenance component missing; use first setup instead of migration';
+        }
+        if (before && before.kind !== a.kind) problem = 'component kind differs';
+        if (before && semverCmp(a.version, before.version) < 0) problem = 'downgrade requires a separate recovery procedure';
+        if (before && a.version === before.version) {
+            if (editionMatches(a)) action = 'retain';
+            else if (a.kind === 'app' && a.id !== 'robertn_store') action = 'replace-app';
+            else if (editionPresentationOnly(a)) action = 'replace-presentation';
+            else problem = 'same-version maintenance/binary replacement is not supported';
+        }
+        var backup = null;
+        if (!problem && before && action !== 'retain') {
+            try { backup = editionOldPackage(a, stage); } catch (e) { problem = e.message; }
+        }
+        if (a.kind === 'tool' && foreignUnit(a.component)) problem = 'another manager owns the component';
+        if (a.id === 'mgu-updater') {
+            var conf = fs.readFileSync(path.join(a.dir, 'files', 'updater.conf'), 'utf8');
+            var local = path.join(updaterDir(), 'updater.local.conf');
+            if (!/^distribution_channel\s*=\s*walle-cn\s*$/m.test(conf)) problem = 'target updater is not the CN distribution';
+            if (fs.existsSync(local) && /^distribution_channel\s*=\s*(?!walle-cn\s*$)\S+/m.test(fs.readFileSync(local, 'utf8'))) {
+                problem = 'local updater configuration overrides the target distribution';
+            }
+        }
+        a.beforeFile = backup;
+        a.action = action;
+        if (problem) blocked.push({ id: a.id, reason: problem });
+        steps.push({ id: a.id, kind: a.kind, version: a.version, artifact: a.incoming,
+            candidate: sha256File(a.file),
+            before: before, action: problem ? 'blocked' : action,
+            recovery: backup ? sha256File(backup) : null });
+    });
+    var unmapped = installedTools().concat(installedApps().filter(function (a) { return a.pkg.mguLocalOnly === true; }))
+        .filter(function (a) { return !seen[a.id]; }).map(function (a) { return { id: a.id, version: a.version }; });
+    unmapped.forEach(function (item) {
+        blocked.push({ id: item.id, reason: 'installed component has no target mapping in this migration' });
+    });
+    var plan = { schema: 1, distribution: 'walle-cn', installer: release.installer,
+        release: sha256File(args.distributionManifest), unit: unitInfo(), boot: bootId(),
+        sources: editionSources(), steps: steps.sort(function (a, b) { return a.id < b.id ? -1 : 1; }),
+        unmapped: unmapped, blocked: blocked };
+    return { plan: plan, id: sha256Buf(Buffer.from(JSON.stringify(plan))), artifacts: artifacts };
+}
+function editionStage() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-edition-'));
+}
+function cmdEditionPlan(args) {
+    var stage = editionStage();
+    try {
+        var result = editionPrepare(args, stage);
+        say(JSON.stringify({ id: result.id, plan: result.plan, ready: !result.plan.blocked.length }));
+        return result.plan.blocked.length ? 2 : 0;
+    } finally { rmrf(stage); }
+}
+function editionSaved(journal, step, side) {
+    var p = path.join(EDITION_DIR, editionId(journal.id), side, step.id + '.tgz');
+    var expected = side === 'before' ? step.recovery : step.prepared;
+    if (!expected || sha256File(p) !== expected) throw refuse('migration recovery/candidate hash mismatch: ' + step.id);
+    return p;
+}
+function editionPresentation(a) {
+    /* Only the already-running log server's presentation changes. Its new
+     * text takes effect at a normal reboot; patch lifecycle hooks never run. */
+    var root = path.join(CFG.varOpt, a.id, 'current'), payload = path.join(a.dir, 'files', 'logs.js');
+    var old = readJsonOrNull(path.join(root, 'component.json'));
+    if (!old || old.version !== a.version) throw refuse('presentation migration version changed');
+    writeAtomic(path.join(root, 'logs.js'), fs.readFileSync(payload), 0o644);
+    writeAtomic(path.join(root, 'component.json'), fs.readFileSync(path.join(a.dir, 'component.json')), 0o644);
+    keepToolCopy(a);
+    var state = loadState();
+    addPending(state, a.id, PENDING_NEXT_START);
+    saveState(state);
+}
+function editionApply(journal, step, restoring, stage) {
+    var file = editionSaved(journal, step, restoring ? 'before' : 'after');
+    var a = validateArtifact(file, stage), current = installedApp(step.id);
+    if (editionMatches(a)) {
+        if (step.stash && fs.existsSync(step.stash.path) &&
+            !carryData(step.id, step.stash.path, step.stash.uid, step.stash.gid, true)) {
+            throw fail(step.id + ': saved application data has not been restored');
+        }
+        return;
+    }
+    if (step.action === 'replace-presentation') editionPresentation(a);
+    else if (a.kind === 'app' && current && current.version === a.version) {
+        var other = editionSaved(journal, step, restoring ? 'after' : 'before');
+        var err = reinstallApp(current, file, other, a.version, function (stash) {
+            step.stash = stash; editionWrite(journal);
+        });
+        if (err) throw err;
+    } else if (restoring && a.kind === 'app' && current) {
+        var fallback = editionSaved(journal, step, 'after');
+        var undoError = reinstallApp(current, file, fallback, a.version, function (stash) {
+            step.stash = stash; editionWrite(journal);
+        });
+        if (undoError) throw undoError;
+    } else {
+        var status = cmdInstall({ artifacts: [file], positional: [], leave: journal.steps.map(function (s) { return s.id; }) });
+        if (status) throw fail(step.id + ': install ended with ' + status);
+    }
+    if (step.stash && fs.existsSync(step.stash.path)) {
+        if (!carryData(step.id, step.stash.path, step.stash.uid, step.stash.gid, true)) {
+            throw fail(step.id + ': saved application data has not been restored');
+        }
+    }
+    if (!editionMatches(a)) throw fail(step.id + ': installed contents do not match the candidate');
+}
+function editionRestore(journal, stage) {
+    journal.phase = 'restoring'; editionWrite(journal);
+    var failed = [];
+    journal.steps.slice().reverse().forEach(function (step) {
+        if (['changing', 'applied', 'restoring', 'restore-failed'].indexOf(step.phase) < 0) return;
+        if (step.phase === 'applied' && step.after &&
+            JSON.stringify(editionCurrent(step.id)) !== JSON.stringify(step.after)) {
+            failed.push(step.id + ': contents changed after the migration step; recovery needs inspection');
+            return;
+        }
+        step.phase = 'restoring'; editionWrite(journal);
+        try {
+            if (step.before) editionApply(journal, step, true, stage);
+            else {
+                /* New installs are only removed if they are still our exact
+                 * candidate; never remove a later user change. */
+                var candidate = validateArtifact(editionSaved(journal, step, 'after'), stage);
+                if (editionCurrent(step.id) && !editionMatches(candidate)) throw refuse(step.id + ': changed since migration');
+                if (editionCurrent(step.id)) cmdUninstall({ positional: [step.id], yes: true });
+            }
+            step.phase = 'restored';
+        } catch (e) { step.phase = 'restore-failed'; failed.push(step.id + ': ' + e.message); }
+        editionWrite(journal);
+    });
+    journal.phase = failed.length ? 'recovery-needed' : 'restored';
+    journal.errors = failed; editionWrite(journal);
+    if (failed.length) throw fail('migration recovery incomplete: ' + failed.join('; '));
+    rmrf(EDITION_ACTIVE); fsyncDir(EDITION_DIR);
+}
+function cmdEditionMigrate(args) {
+    confirmYes(args, 'migrate the selected distribution components');
+    editionId(args.expectPlan);
+    var stage = editionStage(), journal;
+    try {
+        var prepared = editionPrepare(args, stage);
+        if (prepared.plan.blocked.length) throw refuse(JSON.stringify(prepared.plan.blocked));
+        if (prepared.id !== args.expectPlan) throw refuse('migration plan changed; inspect a fresh plan before writing');
+        if (editionPending()) throw refuse('an earlier migration must be recovered first');
+        var root = path.join(EDITION_DIR, prepared.id);
+        if (lstatOrNull(root)) throw refuse('migration record already exists; inspect its status');
+        mkdirp(root, 0o700);
+        journal = { schema: 1, id: prepared.id, phase: 'prepared', plan: prepared.plan, steps: [] };
+        /* Every candidate is compiled and every old payload is durable before
+         * the first installed component changes. */
+        prepared.artifacts.forEach(function (a) {
+            var step = Object.assign({}, prepared.plan.steps.filter(function (s) { return s.id === a.id; })[0]);
+            step.prepared = sha256File(a.file); step.phase = 'prepared';
+            writeAtomic(path.join(root, 'after', a.id + '.tgz'), fs.readFileSync(a.file), 0o600);
+            if (a.beforeFile) writeAtomic(path.join(root, 'before', a.id + '.tgz'), fs.readFileSync(a.beforeFile), 0o600);
+            journal.steps.push(step);
+        });
+        /* A private runner remains usable if the live deploy tool changes. */
+        SELF_FILES.forEach(function (f) {
+            writeAtomic(path.join(root, 'runner', f.path), fs.readFileSync(selfFile(f.path)), octalMode(f.mode));
+        });
+        editionWrite(journal);
+        writeAtomic(EDITION_ACTIVE, JSON.stringify({ id: journal.id }) + '\n', 0o600);
+        journal.phase = 'applying'; editionWrite(journal);
+        try {
+            journal.steps.forEach(function (step) {
+                if (step.action === 'retain') { step.phase = 'retained'; editionWrite(journal); return; }
+                step.phase = 'changing'; editionWrite(journal);
+                editionApply(journal, step, false, stage);
+                step.after = editionCurrent(step.id);
+                step.phase = 'applied'; editionWrite(journal);
+            });
+            journal.phase = 'awaiting-verification'; editionWrite(journal);
+            say(JSON.stringify({ id: journal.id, phase: journal.phase, installed: true, verified: false }));
+            return 0;
+        } catch (e) {
+            journal.error = e.message; editionWrite(journal);
+            try { editionRestore(journal, stage); }
+            catch (restore) { throw fail(e.message + '; ' + restore.message); }
+            throw fail(e.message + '; previous payloads restored');
+        }
+    } finally { rmrf(stage); }
+}
+function cmdEditionStatus(args) {
+    var id = args.positional[0] || editionPending();
+    if (!id) { say(JSON.stringify({ phase: 'none' })); return 0; }
+    say(JSON.stringify(editionRead(id))); return 0;
+}
+function cmdEditionRollback(args) {
+    confirmYes(args, 'restore this migration from its saved payloads');
+    var journal = editionRead(args.positional[0]);
+    if (journal.phase === 'restored') { say(JSON.stringify({ id: journal.id, phase: 'restored' })); return 0; }
+    var active = editionPending();
+    if (active && active !== journal.id) throw refuse('another migration is active');
+    if (unitInfo().hmi !== journal.plan.unit.hmi || unitInfo().firmware !== journal.plan.unit.firmware) {
+        throw refuse('migration recovery requires the same head-unit firmware');
+    }
+    /* A completed migration may have been followed by other updates. */
+    journal.steps.forEach(function (step) {
+        if (step.phase === 'applied' && JSON.stringify(editionCurrent(step.id)) !== JSON.stringify(step.after)) {
+            if (journal.phase === 'verified') throw refuse(step.id + ': changed after migration');
+        }
+    });
+    var stage = editionStage();
+    try {
+        writeAtomic(EDITION_ACTIVE, JSON.stringify({ id: journal.id }) + '\n', 0o600);
+        editionRestore(journal, stage);
+        say(JSON.stringify({ id: journal.id, phase: journal.phase }));
+        return 0;
+    } finally { rmrf(stage); }
+}
+function cmdEditionVerify(args) {
+    var journal = editionRead(args.positional[0]), stage = editionStage();
+    try {
+        if (journal.phase !== 'awaiting-verification' && journal.phase !== 'verified') {
+            throw refuse('migration is not awaiting verification: ' + journal.phase);
+        }
+        if (unitInfo().hmi !== journal.plan.unit.hmi || unitInfo().firmware !== journal.plan.unit.firmware) {
+            throw refuse('head-unit identity/firmware changed since migration');
+        }
+        journal.steps.forEach(function (step) {
+            var a = validateArtifact(editionSaved(journal, step, 'after'), stage);
+            if (!editionMatches(a)) throw refuse(step.id + ': active payload differs from the migration');
+            if (step.kind === 'app' && !tileFlags(installedApp(step.id).entry).visible) {
+                throw refuse(step.id + ': the app tile is not visible');
+            }
+            if (step.action === 'replace-presentation' && bootId() === journal.plan.boot) {
+                throw refuse(step.id + ': the presentation change awaits a normal head-unit restart');
+            }
+        });
+        /* This confirms local installation only. Runtime source access and an
+         * actual subsequent update are separately recorded by the installer. */
+        if (!managerPid() || guardWhy()) throw refuse('app manager health is not confirmed');
+        journal.phase = 'verified'; editionWrite(journal);
+        if (editionPending() === journal.id) { rmrf(EDITION_ACTIVE); fsyncDir(EDITION_DIR); }
+        say(JSON.stringify({ id: journal.id, phase: 'verified', onlineUpdateVerified: false }));
+        return 0;
+    } finally { rmrf(stage); }
+}
+
 function confirmYes(args, what) {
     if (args.yes) return;
     if (!process.stdin.isTTY) throw refuse(what + ' requires --yes (stdin is not a TTY)');
@@ -8188,6 +8603,13 @@ var HELP = [
     '  check [--artifact <file>...]     read-only checks; exits 2 on a hard problem',
     '  install [--artifact <file>...] [--skip-older] [--leave <id>...] [--yes]',
     '                                    install tools/apps (default: ./artifacts/*.tgz)',
+    '  edition-plan --distribution-manifest <file> --artifact <file>... --json',
+    '                                    stage/compile and inspect a CN migration; no installed component changes',
+    '  edition-migrate --distribution-manifest <file> --artifact <file>... --expect-plan <sha256> --yes',
+    '                                    apply the exact inspected migration with private recovery payloads',
+    '  edition-status [<plan sha256>]    read a migration journal, without repairs',
+    '  edition-verify <plan sha256>      verify installed content/tiles after the required restart',
+    '  edition-rollback <plan sha256> --yes  restore the saved migration payloads',
     '  status [--json]                  installed components and pending reboots',
     '  status --read-only [--json]      the same, its upkeep left undone: changes nothing',
     '  relay [<id>...] --yes            lay a stale tool\'s files again from the copy kept here, without its install step',
@@ -8226,6 +8648,8 @@ function parseArgs(argv) {
         else if (argv[i] === '--remove') out.remove = argv[++i] || '';
         else if (argv[i] === '--list') out.list = true;
         else if (argv[i] === '--read-only') out.readOnly = true;
+        else if (argv[i] === '--distribution-manifest') out.distributionManifest = argv[++i];
+        else if (argv[i] === '--expect-plan') out.expectPlan = argv[++i];
         else if (argv[i] === '--leave') (out.leave = out.leave || []).push(argv[++i]);
         else out.positional.push(argv[i]);
     }
@@ -8243,15 +8667,28 @@ function main() {
 function runCommand() {
     var args = parseArgs(process.argv.slice(2)), locked = false;
     var rootOnly = ['install', 'relay', 'setup', 'uninstall', 'remove-all', 'rollback', 'restore', 'fallback', 'updater-token', 'updater-sources', 'apply-pending',
-        'appmanager', 'verify', 'remove-unused']
+        'appmanager', 'verify', 'remove-unused', 'edition-plan', 'edition-migrate', 'edition-rollback', 'edition-verify']
         .indexOf(args.command) >= 0;
     try {
         if (!FAKE && typeof process.getuid === 'function' && process.getuid() !== 0 && rootOnly) {
             throw refuse('run as root');
         }
+        if (editionPending() && rootOnly &&
+            ['edition-status', 'edition-rollback', 'edition-verify', 'edition-plan'].indexOf(args.command) < 0) {
+            throw refuse('unfinished edition migration ' + editionPending() + '; inspect or recover it before another write');
+        }
         if (rootOnly && !(args.command === 'fallback' && args.positional[0] === 'status') &&
             !(args.command === 'appmanager' && !args.positional[0]) && !(args.command === 'remove-all' && !args.yes)) {
             acquireLock(); locked = true;
+            if (editionPending() &&
+                ['edition-status', 'edition-rollback', 'edition-verify', 'edition-plan'].indexOf(args.command) < 0) {
+                throw refuse('unfinished edition migration ' + editionPending() + '; inspect or recover it before another write');
+            }
+            if (args.command === 'edition-plan') return cmdEditionPlan(args);
+            if (args.command === 'edition-status') return cmdEditionStatus(args);
+            if (args.command === 'edition-migrate') return cmdEditionMigrate(args);
+            if (args.command === 'edition-rollback') return cmdEditionRollback(args);
+            if (args.command === 'edition-verify') return cmdEditionVerify(args);
             try { cleanStale(); } catch (e) { warn('could not remove a killed run\'s files: ' + e.message); }
             var off = guardWhy();
             if (off) guardTrip(off);
@@ -8259,9 +8696,10 @@ function runCommand() {
             catch (e) { warn('the data folders set aside were not looked at: ' + e.message); }
         }
         if (args.command === 'help' || args.command === '--help') { say(HELP); return 0; }
+        if (args.command === 'edition-status') return cmdEditionStatus(args);
         if (args.command === 'check') return cmdCheck(args);
         if (args.command === 'install') return cmdInstall(args);
-        if (args.command === 'status') { statusReadOnly = !!args.readOnly; syncMgrHome(); syncGuard(); syncStashes(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), syncListingId8()); }
+        if (args.command === 'status') { statusReadOnly = !!args.readOnly || !!editionPending(); syncMgrHome(); syncGuard(); syncStashes(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), syncListingId8()); }
         if (args.command === 'relist') {
             if (!FAKE && typeof process.getuid === 'function' && process.getuid() !== 0) throw refuse('run as root');
             return cmdRelist();
