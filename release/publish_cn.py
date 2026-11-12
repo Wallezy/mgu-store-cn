@@ -109,7 +109,7 @@ class Remote:
     def binding(self):
         p = subprocess.run([str(self.cli), "api", "list-cname", "--bucket", "walle-mgu",
                             "--output-format", "json"] + self.options,
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, timeout=60, cwd=self.work)
         if p.returncode:
             raise RuntimeError("Cannot verify the CN domain/certificate binding")
         value = json.JSONDecoder().raw_decode(p.stdout.lstrip())[0]
@@ -131,7 +131,7 @@ class Remote:
                             "--force", "--no-progress", "--cache-control", cache(rel),
                             "--content-type", content_type(rel), "--output-dir",
                             str(self.work / "ossutil-output")] + self.options,
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=300, cwd=self.work)
         if p.returncode:
             raise RuntimeError("OSS upload failed: " + rel)
 

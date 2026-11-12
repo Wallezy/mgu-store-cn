@@ -151,6 +151,19 @@ class PublicationTests(F.PreparationTests):
             self.execute(remote, "stable")
         self.assertFalse(remote.writes)
 
+    def test_cli_diagnostics_are_confined_to_private_work_directory(self):
+        work = self.root / "private-work"
+        work.mkdir(mode=0o700)
+        remote = U.Remote("beta", pathlib.Path("/fixture/ossutil"), pathlib.Path("/fixture/config"), work)
+        response = mock.Mock(returncode=0, stdout=json.dumps({
+            "Bucket": "walle-mgu", "Cname": [{"Domain": "mgu.walle.pw", "Status": "Enabled",
+                                            "Certificate": {"Status": "Enabled"}}]}))
+        with mock.patch.object(U.subprocess, "run", return_value=response) as run:
+            remote.binding()
+            remote.put("NOTICE.txt", self.root)
+            self.assertEqual(len(run.call_args_list), 2)
+            self.assertTrue(all(call.kwargs["cwd"] == work for call in run.call_args_list))
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(PublicationTests(name) for name in PublicationTests.__dict__
