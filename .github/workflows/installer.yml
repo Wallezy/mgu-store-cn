@@ -4,7 +4,6 @@ name: CN installer checks
 on:
   push:
     branches: [main]
-    paths: ['deploy/**', 'apps/robertn_store/**', '.github/workflows/installer.yml']
   pull_request:
     paths: ['deploy/**', 'apps/robertn_store/**', '.github/workflows/installer.yml']
   workflow_dispatch:
