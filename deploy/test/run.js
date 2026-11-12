@@ -9792,10 +9792,19 @@ function testEditionMigration() {
         { 'label.txt': 'retain me' }), '--yes']);
     const preservedTool = mixed.p('var/opt/fixture-tool/current/lib/helper.js');
     const originalTool = fs.readFileSync(preservedTool);
+    const moduleTarget = mixed.p('usr/lib/fixture-native.node');
+    const nativeLink = path.join(mixed.home(app(mixed).uid), 'source/native.node');
+    write(moduleTarget, 'native module');
+    fs.symlinkSync(moduleTarget, nativeLink);
     const mixedPlan = jsonLast(plan(mixed));
     check('edition: third-party tools and apps are explicitly preserved',
         mixedPlan.ready && mixedPlan.plan.preserved.length === 2 &&
         mixedPlan.plan.preserved.every((c) => c.action === 'preserve' && c.before.content));
+    write(moduleTarget, 'different module');
+    r = mixed.run(['edition-migrate', '--expect-plan', mixedPlan.id, '--yes'].concat(options));
+    check('edition: native module links are fingerprinted including target bytes',
+        r.status === 2 && r.out.includes('plan changed'), r.out);
+    write(moduleTarget, 'native module');
     fs.appendFileSync(preservedTool, '\n// external change\n');
     r = mixed.run(['edition-migrate', '--expect-plan', mixedPlan.id, '--yes'].concat(options));
     check('edition: changed preserved payload invalidates the inspected plan',

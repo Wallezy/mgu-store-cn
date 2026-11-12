@@ -7240,7 +7240,12 @@ function editionRead(id) {
 function editionTree(dir) {
     if (!lstatOrNull(dir)) return null;
     return sha256Buf(Buffer.from(walk(dir, '', []).map(function (e) {
-        if (e.stat.isSymbolicLink() || (!e.stat.isFile() && !e.stat.isDirectory())) {
+        if (e.stat.isSymbolicLink()) {
+            var target = statOrNull(e.path);
+            if (!target || !target.isFile()) throw refuse('unsupported migration link: ' + e.path);
+            return [e.rel, e.stat.mode & 0o7777, 'link', fs.readlinkSync(e.path), sha256File(e.path)].join(':');
+        }
+        if (!e.stat.isFile() && !e.stat.isDirectory()) {
             throw refuse('unsupported object in migration payload: ' + e.path);
         }
         return [e.rel, e.stat.mode & 0o7777, e.stat.isFile() ? sha256File(e.path) : 'directory'].join(':');
