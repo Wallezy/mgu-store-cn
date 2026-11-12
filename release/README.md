@@ -21,7 +21,12 @@ Contributors: [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## CN publication
 
-This fork publishes only to `Wallezy/mgu-store-cn`. The manual workflow defaults
+CN OSS publication follows [the owner's channel policy](../docs/CN-RELEASE-CHANNELS.md).
+Reviewed upstream updates publish identical payloads to Beta and Stable with
+runtime integration explicitly pending; the source, reproducibility, dependency
+and exact-commit CI checks still apply.
+
+The optional GitHub Release workflow publishes only to `Wallezy/mgu-store-cn`. It defaults
 to a dry run. A live publish requires an already stamped, committed version and
 a successful `release-check/cn-integration` on that exact HEAD; existing component
 checks also apply. Unit-test CI cannot establish that status. Live publication
