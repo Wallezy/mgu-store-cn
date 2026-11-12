@@ -83,9 +83,13 @@ Store. A real code change, rather than a fabricated version or modified
 same-version archive, supplies the online update.
 
 The RHMI recovery trial uses deploy 0.8.17 and Store 0.9.38 for migration,
-then Store 0.9.39 for the online self-update. Store 0.9.39 shows `CN Beta` or
+then deploy 0.8.18 and Store 0.9.39 for the online update. Deploy 0.8.18 also
+refuses a kept recovery package without HMI resources when the installed app
+has a UI. The initial trial requires complete kept packages for both apps,
+checked against the saved vehicle files before connection.
+Store 0.9.39 shows `CN Beta` or
 `CN Stable` in Settings from the running updater's reported channel. The
-updater, native map components and deploy tool keep the same bytes between
+updater and native map components keep the same bytes between
 these two snapshots. Both snapshots retain independent hashes and provenance.
 
 Verify the migration transaction before the online update. Once its installed

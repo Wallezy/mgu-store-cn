@@ -55,7 +55,7 @@ var os = require('os');
 process.umask(0o022);
 
 /* deploy/component.json's version; the release sets both. */
-var VERSION = '0.8.17';
+var VERSION = '0.8.18';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -7322,7 +7322,7 @@ function editionHmiPath(rel) { return /^(rhmiData|rhmiDataStartWidget)(\/|$)/.te
 function editionHmiMatches(a, home) {
     return ['rhmiData', 'rhmiDataStartWidget'].every(function (name) {
         var src = path.join(a.pkgDir, name);
-        if (!lstatOrNull(src)) return true;
+        if (!lstatOrNull(src)) return !lstatOrNull(path.join(home, name));
         var wanted = readJsonOrNull(path.join(src, 'application.json'));
         var installed = readJsonOrNull(path.join(home, name, 'application.json'));
         var parts = id7Parts(src, mainappHmi().brand);

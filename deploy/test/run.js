@@ -9962,6 +9962,15 @@ function testEditionHmiMigration() {
     check('edition HMI: missing runtime is not treated as a relocated resource',
         r.status === 2 && r.out.includes('missing recovery runtime file'), r.out);
     fs.writeFileSync(runtime, bytes);
+    const oldKept = root.p(`var/opt/mgu-deploy/kept/${id}/${id}@1.0.0.tgz`);
+    const completeOld = fs.readFileSync(oldKept);
+    const stripped = untarBuf(completeOld);
+    fs.writeFileSync(oldKept, tgz(Object.keys(stripped).filter((name) => !name.startsWith('rhmiData/'))
+        .map((name) => ({ name, data: stripped[name], mode: 0o644 })), 0));
+    r = root.run(['edition-plan'].concat(args));
+    check('edition HMI: a runtime-only kept package cannot recover an installed UI',
+        r.status === 2 && r.out.includes('cannot reproduce the installed HMI resources'), r.out);
+    fs.writeFileSync(oldKept, completeOld);
     const fresh = donorRoot();
     Object.assign(fresh.env, { FAKE_MGR_RELOCATE_HMI: '1' });
     fresh.run(['install', '--artifact', old, '--yes']);
