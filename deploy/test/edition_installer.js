@@ -135,6 +135,22 @@ assert(fs.readFileSync(log, 'utf8').includes('edition-migrate'));
 assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root, 'cn-manifest.json'))).installReady, false);
 console.log('ok - explicit Beta trial binds the snapshot and preserves target refusals without forging Stable readiness');
 
+const reviewed = JSON.parse(JSON.stringify(manifest));
+reviewed.installReady = true;
+reviewed.status = 'stable-upstream-reviewed';
+reviewed.validation = {
+    method: 'reviewed-upstream', fully_vehicle_validated: false,
+    checks: ['source_checks', 'upstream_review', 'reproducible_build'],
+    upstream_commits: { 'mgu-store': 'a'.repeat(40), 'idrive-apps': 'b'.repeat(40) }
+};
+assert(installer.stableMigrationReady(reviewed));
+reviewed.validation.checks.pop();
+assert(!installer.stableMigrationReady(reviewed));
+reviewed.validation.checks.push('reproducible_build');
+reviewed.installReady = false;
+assert(!installer.stableMigrationReady(reviewed));
+console.log('ok - reviewed upstream Stable migration requires release readiness and complete source review');
+
 const item = files.find((f) => f.path.endsWith('robertn_waze_cluster@1.2.3.tgz'));
 const saved = fs.readFileSync(path.join(root, item.path));
 fs.writeFileSync(path.join(root, item.path), 'corrupt');

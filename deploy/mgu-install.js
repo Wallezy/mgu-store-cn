@@ -1043,6 +1043,21 @@ function migrationRuntimeCheck(state, journal) {
     }
     return null;
 }
+function stableMigrationReady(manifest) {
+    if (manifest.installReady !== true) return false;
+    const repos = ['mgu-store', 'idrive-apps'], v = manifest.validation || {};
+    const checks = ['source_checks', 'upstream_review', 'reproducible_build'];
+    const reviewed = manifest.status === 'stable-upstream-reviewed' && v.method === 'reviewed-upstream' &&
+        v.fully_vehicle_validated === false && Array.isArray(v.checks) &&
+        v.checks.length === checks.length && checks.every((c) => v.checks.includes(c)) &&
+        v.upstream_commits && Object.keys(v.upstream_commits).length === repos.length &&
+        repos.every((repo) => /^[a-f0-9]{40}$/.test(v.upstream_commits[repo] || ''));
+    return repos.every((repo) => {
+        const r = (manifest.repositories || {})[repo], s = r && r.integration;
+        return s && s.context === 'release-check/cn-integration' &&
+            s.state === (reviewed ? 'pending' : 'success') && s.sha === r.commit;
+    });
+}
 async function migrateCn(o) {
     if (!o.from || !!o.planOnly === !!o.expectPlan) {
         throw new Usage('migrate-cn needs --from and exactly one of --plan-only or --expect-plan');
@@ -1057,11 +1072,7 @@ async function migrateCn(o) {
     if (!o.planOnly && channel === 'beta' && o.expectSnapshot !== snapshot.digest) {
         throw new Usage('Beta vehicle testing requires --channel beta, --expect-snapshot and the exact --expect-plan');
     }
-    if (!o.planOnly && channel === 'stable' && (snapshot.manifest.installReady !== true ||
-        ['mgu-store', 'idrive-apps'].some((repo) => {
-            const r = snapshot.manifest.repositories[repo], s = r.integration;
-            return !s || s.context !== 'release-check/cn-integration' || s.state !== 'success' || s.sha !== r.commit;
-        }))) {
+    if (!o.planOnly && channel === 'stable' && !stableMigrationReady(snapshot.manifest)) {
         throw new Usage('this snapshot is for preparation only; migration integration/publication evidence is missing');
     }
     if (!o.planOnly && channel === 'beta') say('Beta owner trial: installation does not establish Stable release approval.');
@@ -1809,6 +1820,6 @@ if (require.main === module || FROM_STDIN) {
 }
 
 module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, updaterPackageIdentity, updaterCompatibility,
-    migrationSnapshot, migrationRelease, migrationRuntimeCheck, SETUP_INSTALLED,
+    migrationSnapshot, migrationRelease, migrationRuntimeCheck, stableMigrationReady, SETUP_INSTALLED,
     sshBanner, enetInterfaces, hsfzFrame, hsfzFrames,
     didAddress, hsfzGateway, hsfzHuAddress, findUnit, reach, tilesShow, STATUS_HAS };
