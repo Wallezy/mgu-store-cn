@@ -89,11 +89,25 @@ Successful content verification releases the migration marker. Existing
 application settings are carried through the manager's install lifecycle;
 the old code cache is cleared by the reviewed upstream deploy behavior.
 
+An application's runtime files are checked in `source/`. MainApp's selected
+RHMI description, merged strings, images and declared entry points are checked
+in the app home's `rhmiData/` and `rhmiDataStartWidget/`. Those resources are
+consumed during installation and need not remain in `source/`.
+
+Recovery packages retain the complete kept package's HMI variants and the
+actual installed runtime bytes. Preparation checks that the kept HMI resources
+reproduce the installed interface and that no required runtime file is missing.
+Generated native-module links are recreated by MainApp. A missing UI resource
+fails verification even if provisioning still registers the tile as visible.
+The owner still confirms that the tile actually opens on the screen.
+
 ## Acceptance still required
 
 Offline fake-root and Node 8 tests exercise same-version replacement, settings,
-independent recovery bytes, stale plans, refusals, process interruption and
-queue/source locks. They do not emulate proprietary MainApp, recmgr or a real
+independent recovery bytes including relocated RHMI resources, stale plans,
+refusals, process interruption and queue/source locks. A private replay of the
+owner's saved Store package and installed files checks the same matcher and
+recovery packer. Neither layer emulates proprietary MainApp, recmgr or a real
 head unit.
 
 Before enabling an installation release, verify the supported starting
@@ -105,5 +119,8 @@ label, successful CI and reachable OSS files alone cannot establish this.
 
 Map components retain `robertn_waze_cluster 0.6.7`, `waze-on-cluster 0.9.10`
 and `cluster-render 0.5.4`. The management candidate uses Store `0.9.38`,
-updater `0.8.42` and deploy `0.8.16`, including the reviewed upstream changes
-through `e883efb`. These are candidate versions, not a published installation.
+updater `0.8.42` and deploy `0.8.17`, including the reviewed upstream changes
+through `e883efb`. These are candidate versions without Stable vehicle approval.
+Deploy `0.8.16` has a known failed owner trial: its whole-package comparison
+rejects relocated RHMI files and its source-only recovery omits interface
+resources. It must not be used for a new migration trial.

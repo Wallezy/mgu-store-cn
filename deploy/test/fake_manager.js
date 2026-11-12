@@ -92,6 +92,41 @@ function unpack(file, source) {
         fs.readdirSync(npm).forEach((n) => fs.renameSync(path.join(npm, n), path.join(source, n)));
         fs.rmdirSync(npm);
     }
+    if (env.FAKE_MGR_RELOCATE_HMI) {
+        for (const name of ['rhmiData', 'rhmiDataStartWidget']) {
+            const src = path.join(source, name), dest = path.join(path.dirname(source), name);
+            const metadata = readJson(path.join(src, 'application.json'));
+            if (!metadata) continue;
+            const app = metadata.application;
+            fs.rmSync(dest, { recursive: true, force: true });
+            const ui = app.uiDescriptions.find((d) => d.hmi.includes('ID7'));
+            for (const rel of [ui.applicationFilePath, ui.uiDescriptionFilePath]) {
+                write(path.join(dest, 'uiDescription', path.basename(rel)), fs.readFileSync(path.join(src, rel)));
+            }
+            const strings = {};
+            for (const group of app.variantGroups) {
+                if (!group.hmi.includes('ID7') || !group.brands.includes('BMW')) continue;
+                for (const [key, kind] of [['stringsPath', 'strings'], ['resourcesPath', 'resources']]) {
+                    const folder = group[key] && path.join(src, group[key]);
+                    if (!folder || !fs.existsSync(folder)) continue;
+                    for (const file of fs.readdirSync(folder)) {
+                        if (kind === 'strings') {
+                            strings[file] = Object.assign(strings[file] || {}, readJson(path.join(folder, file)));
+                        } else write(path.join(dest, kind, file), fs.readFileSync(path.join(folder, file)));
+                    }
+                }
+            }
+            for (const file of Object.keys(strings)) write(path.join(dest, 'strings', file), JSON.stringify(strings[file]));
+            delete app.uiDescriptions;
+            delete app.variantGroups;
+            app.entryPointsStringBundleUuid = 'generated-fixture-bundle';
+            write(path.join(dest, 'application.json'), JSON.stringify(metadata));
+            fs.rmSync(src, { recursive: true, force: true });
+            if ((readJson(path.join(source, 'package.json')) || {}).version === env.FAKE_MGR_OMIT_HMI_VERSION) {
+                fs.rmSync(dest, { recursive: true, force: true });
+            }
+        }
+    }
 }
 const fallbackActive = () => fs.existsSync(path.join(env.MGU_DEPLOY_VAR_OPT, 'mgu-deploy', 'main.js')) &&
     fs.existsSync(path.join(env.MGU_DEPLOY_SYSTEMD, 'mgu-app-fallback.service'));

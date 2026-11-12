@@ -55,7 +55,7 @@ var os = require('os');
 process.umask(0o022);
 
 /* deploy/component.json's version; the release sets both. */
-var VERSION = '0.8.16';
+var VERSION = '0.8.17';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -7284,7 +7284,10 @@ function editionCurrent(id) {
     var app = installedApp(id), tool = installedTools().filter(function (t) { return t.id === id; })[0];
     if (app && tool) throw refuse('ambiguous installed identity: ' + id);
     if (app) return { kind: 'app', version: app.version, uid: app.uid,
-        content: editionTree(path.join(appHome(app.uid), 'source')) };
+        content: editionTree(path.join(appHome(app.uid), 'source')),
+        hmi: ['rhmiData', 'rhmiDataStartWidget'].map(function (name) {
+            return editionTree(path.join(appHome(app.uid), name));
+        }) };
     if (lstatOrNull(appEntryFile(id))) throw refuse('unreadable installed app: ' + id);
     if (tool) return { kind: 'tool', version: tool.version, content: editionTree(path.join(tool.root, 'current')) };
     if (lstatOrNull(path.join(CFG.varOpt, id, 'current'))) throw refuse('unreadable installed tool: ' + id);
@@ -7313,12 +7316,43 @@ function editionCandidate(a) {
     return sha256Buf(Buffer.from(walk(a.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); })
         .map(function (e) { return e.rel + ':' + editionContent(e.path, e.rel); }).sort().join('\n')));
 }
+function editionHmiPath(rel) { return /^(rhmiData|rhmiDataStartWidget)(\/|$)/.test(rel); }
+/* MainApp consumes the package's HMI tree and installs selected/merged parts
+ * beside source/. Check those parts, not the consumed source paths. */
+function editionHmiMatches(a, home) {
+    return ['rhmiData', 'rhmiDataStartWidget'].every(function (name) {
+        var src = path.join(a.pkgDir, name);
+        if (!lstatOrNull(src)) return true;
+        var wanted = readJsonOrNull(path.join(src, 'application.json'));
+        var installed = readJsonOrNull(path.join(home, name, 'application.json'));
+        var parts = id7Parts(src, mainappHmi().brand);
+        if (!wanted || !wanted.application || !installed || !installed.application || !parts) return false;
+        /* Generated bundle/bookmark IDs belong to MainApp. The package's
+         * declared identity and entry points must survive installation. */
+        if (!Object.keys(wanted.application).filter(function (key) {
+            return key !== 'uiDescriptions' && key !== 'variantGroups';
+        }).every(function (key) {
+            return JSON.stringify(wanted.application[key]) === JSON.stringify(installed.application[key]);
+        })) return false;
+        return Object.keys(PART_MODES).every(function (kind) {
+            return Object.keys(parts[kind]).every(function (nameInPart) {
+                var file = path.join(home, name, kind, nameInPart), st = lstatOrNull(file);
+                return st && st.isFile() && (kind === 'strings' ?
+                    sameJsonFile(file, parts[kind][nameInPart]) :
+                    bytesEqualFile(fs.readFileSync(parts[kind][nameInPart]), file));
+            });
+        });
+    });
+}
 function editionMatches(a) {
     var now = editionCurrent(a.id);
     if (!now || now.version !== a.version || now.kind !== a.kind) return false;
     if (a.kind === 'app') {
         var app = installedApp(a.id), dir = path.join(appHome(app.uid), 'source');
-        return walk(a.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); }).every(function (e) {
+        return editionHmiMatches(a, appHome(app.uid)) &&
+            walk(a.pkgDir, '', []).filter(function (e) {
+                return e.stat.isFile() && !editionHmiPath(e.rel);
+            }).every(function (e) {
             var p = path.join(dir, e.rel), st = lstatOrNull(p);
             return st && st.isFile() && editionContent(p, e.rel) === editionContent(e.path, e.rel);
         });
@@ -7339,7 +7373,15 @@ function editionOldPackage(a, stage) {
         if (old.kind !== 'app' || old.id !== a.id || old.version !== app.version) {
             throw refuse(a.id + ': no verified package of the actual installed app for recovery');
         }
-        var source = path.join(appHome(app.uid), 'source'), fingerprint = editionTree(source);
+        var source = path.join(appHome(app.uid), 'source'), fingerprint = editionCurrent(a.id);
+        if (!editionHmiMatches(old, appHome(app.uid))) {
+            throw refuse(a.id + ': kept package cannot reproduce the installed HMI resources');
+        }
+        var complete = walk(old.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); });
+        complete.filter(function (e) { return !editionHmiPath(e.rel); }).forEach(function (e) {
+            var st = lstatOrNull(path.join(source, e.rel));
+            if (!st || !st.isFile()) throw refuse(a.id + ': missing recovery runtime file: ' + e.rel);
+        });
         var actual = walk(source, '', []).filter(function (e) {
             if (e.stat.isSymbolicLink()) {
                 /* MainApp supplies these system modules again at installation. */
@@ -7348,14 +7390,19 @@ function editionOldPackage(a, stage) {
                     statOrNull(e.path) && statOrNull(e.path).isFile()) return false;
                 throw refuse(a.id + ': application recovery cannot reproduce link ' + e.rel);
             }
-            return e.stat.isFile();
+            return e.stat.isFile() && !editionHmiPath(e.rel);
         }).map(function (e) {
             return { name: e.rel, data: fs.readFileSync(e.path), mode: e.stat.mode & 0o7777 };
         });
+        complete.filter(function (e) { return editionHmiPath(e.rel); }).forEach(function (e) {
+            actual.push({ name: e.rel, data: fs.readFileSync(e.path), mode: e.stat.mode & 0o7777 });
+        });
+        actual.sort(function (x, y) { return x.name < y.name ? -1 : 1; });
         var savedApp = path.join(stage, 'before-' + a.id + '.tgz');
         writeAtomic(savedApp, require(selfFile('oap_pack.js')).tgz(actual, 0), 0o600);
         var restoredApp = validateArtifact(savedApp, stage);
-        if (editionTree(source) !== fingerprint || restoredApp.prepare || !editionMatches(restoredApp)) {
+        if (JSON.stringify(editionCurrent(a.id)) !== JSON.stringify(fingerprint) ||
+            restoredApp.prepare || !editionMatches(restoredApp)) {
             throw refuse(a.id + ': actual installed app cannot be recovered without transformation');
         }
         return savedApp;

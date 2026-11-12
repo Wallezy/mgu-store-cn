@@ -9903,6 +9903,79 @@ function testEditionMigration() {
         r.status === 0 && !fs.existsSync(root.p('var/opt/mgu-updater/updater.local.conf')), r.out);
 }
 
+function testEditionHmiMigration() {
+    const id = 'robertn_store', old = hmiPartsApp(id, '1.0.0'), target = hmiPartsApp(id, '1.1.0');
+    const out = path.join(T, 'edition-hmi-deploy');
+    const built = hu(['artifact', DEPLOY, '--out', out]);
+    if (built.status) throw new Error(built.out);
+    const deploy = path.join(out, `mgu-deploy@${VERSION}.tgz`);
+    const manifest = path.join(T, 'edition-hmi-manifest.json');
+    write(manifest, JSON.stringify({ schema: 1, distribution: 'walle-cn', installer: 'a'.repeat(64),
+        components: [[id, '1.1.0', target], ['mgu-deploy', VERSION, deploy]].map(([id, version, file]) =>
+            ({ id, version, sha256: sha256(fs.readFileSync(file)), requires: {} })) }));
+    const args = ['--artifact', target, '--artifact', deploy, '--distribution-manifest', manifest];
+    const last = (r) => JSON.parse(r.stdout.trim().split('\n').pop());
+    const root = donorRoot();
+    Object.assign(root.env, { FAKE_MGR_RELOCATE_HMI: '1' });
+    let r = root.run(['install', '--artifact', old, '--yes']);
+    const home = () => root.home(readJson(root.entry(id)).userId);
+    check('edition HMI: fixture moves UI assets out of source', r.status === 0 &&
+        !fs.existsSync(path.join(home(), 'source/rhmiData')) &&
+        fs.existsSync(path.join(home(), 'rhmiData/resources/icon.png')), r.out);
+    write(path.join(home(), 'source/javascript/app.js'), 'console.log("actual runtime");\n');
+    write(path.join(home(), 'data/settings.json'), '{"display":"hud"}');
+    const p = last(root.run(['edition-plan'].concat(args)));
+    check('edition HMI: complete old package and relocated parts permit migration', p.ready);
+    r = root.run(['edition-migrate', '--expect-plan', p.id, '--yes'].concat(args));
+    check('edition HMI: normal MainApp relocation passes installation verification',
+        r.status === 0 && last(r).phase === 'awaiting-verification', r.out);
+    const recovery = root.p(`var/opt/mgu-deploy/edition-migrations/${p.id}/before/${id}.tgz`);
+    const kept = untarBuf(fs.readFileSync(recovery));
+    check('edition HMI: recovery preserves all HMI variants and actual runtime bytes',
+        kept['rhmiData/uiDescriptions/ID7/application.xml'] &&
+        kept['rhmiData/uiDescriptions/ID8/application.xml'] &&
+        kept['rhmiData/variantGroups/Common/images/icon.png'] &&
+        kept['javascript/app.js'].toString() === 'console.log("actual runtime");\n');
+    const icon = path.join(home(), 'rhmiData/resources/icon.png'), iconBytes = fs.readFileSync(icon);
+    fs.unlinkSync(icon);
+    r = root.run(['edition-verify', p.id]);
+    check('edition HMI: a registered tile with missing resources fails verification',
+        r.status === 2 && r.out.includes('active payload differs'), r.out);
+    fs.writeFileSync(icon, iconBytes);
+    r = root.run(['edition-verify', p.id]);
+    check('edition HMI: deployed UI and runtime verify together', r.status === 0, r.out);
+    r = root.run(['edition-rollback', p.id, '--yes']);
+    check('edition HMI: rollback restores UI, runtime and settings',
+        r.status === 0 &&
+        readJson(path.join(home(), 'source/package.json')).version === '1.0.0' &&
+        fs.readFileSync(path.join(home(), 'source/javascript/app.js'), 'utf8') === 'console.log("actual runtime");\n' &&
+        fs.readFileSync(path.join(home(), 'rhmiData/resources/icon.png'), 'utf8') === 'seven icon' &&
+        readJson(path.join(home(), 'data/settings.json')).display === 'hud', r.out);
+    fs.unlinkSync(path.join(home(), 'rhmiData/uiDescription/application.xml'));
+    r = root.run(['edition-plan'].concat(args));
+    check('edition HMI: missing installed UI blocks an unverifiable recovery plan',
+        r.status === 2 && r.out.includes('cannot reproduce the installed HMI resources'), r.out);
+    write(path.join(home(), 'rhmiData/uiDescription/application.xml'), '<ID7/>\n');
+    const runtime = path.join(home(), 'source/javascript/app.js'), bytes = fs.readFileSync(runtime);
+    fs.unlinkSync(runtime);
+    r = root.run(['edition-plan'].concat(args));
+    check('edition HMI: missing runtime is not treated as a relocated resource',
+        r.status === 2 && r.out.includes('missing recovery runtime file'), r.out);
+    fs.writeFileSync(runtime, bytes);
+    const fresh = donorRoot();
+    Object.assign(fresh.env, { FAKE_MGR_RELOCATE_HMI: '1' });
+    fresh.run(['install', '--artifact', old, '--yes']);
+    const next = last(fresh.run(['edition-plan'].concat(args)));
+    r = fresh.run(['edition-migrate', '--expect-plan', next.id, '--yes'].concat(args),
+        { FAKE_MGR_OMIT_HMI_VERSION: '1.1.0' });
+    const recoveredHome = fresh.home(readJson(fresh.entry(id)).userId);
+    check('edition HMI: an actual UI installation failure auto-restores the complete old Store',
+        r.status === 1 && last(fresh.run(['edition-status', next.id])).phase === 'restored' &&
+        readJson(path.join(recoveredHome, 'source/package.json')).version === '1.0.0' &&
+        fs.existsSync(path.join(recoveredHome, 'rhmiData/resources/icon.png')) &&
+        fs.existsSync(path.join(recoveredHome, 'rhmiData/uiDescription/application.xml')), r.out);
+}
+
 function testEditionToolMigration() {
     function artifact(id, text, binary) {
         const dir = fs.mkdtempSync(path.join(T, 'edition-tool-'));
@@ -10000,6 +10073,7 @@ function testReadOnlyOnlyStatus() {
 const SUITES = [
     testEditionMigration,
     testEditionToolMigration,
+    testEditionHmiMigration,
     testArtifact,
     testSelf,
     testRefusals,
