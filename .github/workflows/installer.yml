@@ -38,7 +38,7 @@ jobs:
 
       - name: CN installer fixtures
         if: runner.os != 'Windows'
-        run: node deploy/test/cn_installer.js
+        run: node deploy/test/cn_installer.js && node deploy/test/edition_installer.js
 
       - name: Prepare bootstrap files
         run: node deploy/installer/bootstrap.js serve/good

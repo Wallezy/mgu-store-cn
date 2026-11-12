@@ -704,8 +704,11 @@ class Fetcher {
         }
     }
 
-    get(url, headers, name, maxBytes, onProgress) {
-        return this.request({ url, headers, name, maxBytes, onProgress });
+    /* keep: the response headers (lower case) to give as the bytes' .headers;
+     * opts: { immutable, fresh } (fetch.js). The bytes' .resumed says a cut
+     * download went on from where it stopped. */
+    get(url, headers, name, maxBytes, onProgress, keep, opts) {
+        return this.request(Object.assign({ url, headers, name, maxBytes, onProgress, keep }, opts || {}));
     }
 
     /* get() for an answer that carries an ETag: asked for again with
@@ -814,7 +817,7 @@ class Fetcher {
                     resolve(Object.assign(Buffer.alloc(0), { headers: result.headers || {}, notModified: true }));
                 } else if (result && result.done) {
                     try {
-                        resolve(Object.assign(this.collect(dest, maxBytes), { headers: result.headers || {} }));
+                        resolve(Object.assign(this.collect(dest, maxBytes), { headers: result.headers || {}, resumed: !!result.resumed }));
                     } catch (err) {
                         reject(err);
                     }
@@ -826,7 +829,7 @@ class Fetcher {
             });
             child.stdin.end(JSON.stringify({ url, headers, dest, maxBytes, dns: lease.dns, lease: this.conf.lease || undefined, ca: this.ca,
                 method: job.method || 'GET', body: job.body, keep: job.keep || [], proxy: this.conf.proxy || undefined,
-                denyGithub: cnSources.enabled(this.conf) }));
+                denyGithub: cnSources.enabled(this.conf), immutable: !!job.immutable, fresh: !!(job.fresh || this.fresh) }));
         }).then((bytes) => {
             this.retire(dir);
             return bytes;
@@ -1014,7 +1017,9 @@ class Updater {
             maxRepoBytes: Number(conf.repo_max_bytes) || 64 << 20,
             maxBuildBytes: Number(conf.build_max_bytes) || 200 << 20,
             // an index source's packages, kept by their sha256
-            cacheDir: path.join(conf.state_dir, 'index')
+            cacheDir: path.join(conf.state_dir, 'index'),
+            // what the installs of one run of the queue keep for each other (next() clears it)
+            batch: sourcesLib.batchCache()
         };
         this.stored = [];
         this.usb = [];
@@ -2173,6 +2178,10 @@ class Updater {
     /* Queues item unless the same is queued or running; returns why it
      * cannot be queued, or null. */
     enqueue(item) {
+        const migration = this.editionMigration();
+        if (migration) {
+            return `edition migration ${migration.id} is ${migration.phase}; finish or restore it before another change`;
+        }
         const refused = this.conflict(item);
         if (refused || this.queue.some((q) => q.id === item.id) || (this.busy && this.busy.id === item.id)) {
             return refused;
@@ -2731,6 +2740,9 @@ class Updater {
      * daemon; the Store's own install after all of them, since it closes
      * the Store. */
     next() {
+        if (this.editionMigration()) {
+            return;
+        }
         const needsSelf = (q) => {
             const rt = q.op === 'install' && q.id !== SELF && this.src.get(q.source);
             const own = rt && rt.components.find((c) => c.id === (q.listed || q.id));
@@ -2750,6 +2762,7 @@ class Updater {
         }
         const item = this.queue.splice(i, 1)[0];
         if (!item) {
+            this.ctx.batch.clear();
             this.busy = null;
             this.changed();
             return;
@@ -2803,9 +2816,10 @@ class Updater {
      * beside another one's id (place) is built from a copy made over to
      * that id (sourcesLib.renameApp), and must come out as that id. */
     artifact(rt, entry, own) {
+        // a download's own total: a whole repo read after some of its files has another
         const progress = (bytes, total) => {
             this.busy.progress = bytes;
-            if (total && !this.busy.total) {
+            if (total) {
                 this.busy.total = total;
             }
             this.changed();
@@ -2813,11 +2827,16 @@ class Updater {
         if (!entry.path) {
             return rt.reader.artifact(entry, progress);
         }
-        // a build script needs the whole repo; packing, the component's folder
-        return rt.reader.files(entry.commit, progress, entry.script ? null : entry.path).then((files) => {
-            const job = { entry: own, files: entry.script ? files : sourcesLib.subtree(files, entry.path) };
-            const made = own.id === entry.id ? job : sourcesLib.renameApp(own, job.files, entry.id);
+        // a build script needs the whole repo, or its folder and the shared files it names; packing, the
+        // component's folder. A public repo's are read file by file (sources.js partFiles)
+        const files = (paths) => rt.reader.files(entry.commit, progress, entry.script ? null : entry.path, paths);
+        return files(rt.public ? sourcesLib.partPaths(entry) : null).then((first) => {
+            const prepare = (got) => {
+                const job = { entry: own, files: entry.script ? got : sourcesLib.subtree(got, entry.path) };
+                return own.id === entry.id ? job : sourcesLib.renameApp(own, job.files, entry.id);
+            };
             if (!entry.script) {
+                const made = prepare(first);
                 return sourcesLib.packComponent(made.entry, made.files);
             }
             this.busy.phase = 'build';
@@ -2829,12 +2848,27 @@ class Updater {
                     this.checkUids();
                 }
             };
-            return this.sdkDonor()
-                // a network build's proxy runs as the fetch uid: once the uplink lets it out
-                .then((donor) => new Promise((resolve) => setTimeout(resolve, Math.max(0, (this.fetcher.notBefore || 0) - Date.now())))
-                    .then(() => donor))
-                .then((donor) => runBuild({ conf: this.conf, entry: made.entry, files: made.files, donor: donor.path, sdk: donor.module,
-                    lease: readLease(this.conf), log: (l) => console.log(l) }))
+            const build = (got) => Promise.resolve().then(() => prepare(got)).then((made) => this.sdkDonor()
+                    // a network build's proxy runs as the fetch uid: once the uplink lets it out
+                    .then((donor) => new Promise((resolve) => setTimeout(resolve, Math.max(0, (this.fetcher.notBefore || 0) - Date.now())))
+                        .then(() => donor))
+                    .then((donor) => runBuild({ conf: this.conf, entry: made.entry, files: made.files, donor: donor.path, sdk: donor.module,
+                        lease: readLease(this.conf), log: (l) => console.log(l) })));
+            // a build that fails with only the files it names is run again with the whole repo
+            return build(first)
+                .catch((err) => {
+                    if (!first.partial) {
+                        throw err;
+                    }
+                    console.log(`${entry.id}: the build failed with its own and its shared files (${err.message}); again with the whole repo`);
+                    Object.assign(this.busy, { phase: 'download', progress: 0, total: null });
+                    this.changed();
+                    return files(null).then((whole) => {
+                        this.busy.phase = 'build';
+                        this.changed();
+                        return build(whole);
+                    });
+                })
                 .then((bytes) => {
                     built();
                     return bytes;
@@ -2857,6 +2891,8 @@ class Updater {
     install(item) {
         // the row's id; the id it installs as
         const key = item.id;
+        const matches = (bytes) => !((entry.artifact.size && bytes.length !== entry.artifact.size) ||
+            (entry.artifact.sha256 && sha256(bytes) !== entry.artifact.sha256));
         const id = item.unit || item.id;
         const rt = this.src.get(item.source);
         const own = rt && rt.components.find((c) => c.id === (item.listed || key));
@@ -2898,11 +2934,27 @@ class Updater {
                 return this.artifact(rt, entry, own);
             })
             .then((bytes) => {
+                if (!bytes.resumed || matches(bytes)) {
+                    return bytes;
+                }
+                console.log(`${id}@${entry.version}: the resumed download does not match the catalog; downloading it again whole`);
+                this.fetcher.fresh = true;
+                const again = () => {
+                    this.fetcher.fresh = false;
+                };
+                return this.artifact(rt, entry, own).then((b) => {
+                    again();
+                    return b;
+                }, (err) => {
+                    again();
+                    throw err;
+                });
+            })
+            .then((bytes) => {
                 this.busy.phase = 'verify';
                 this.changed();
                 console.log(`${id}@${entry.version}: verify`);
-                if ((entry.artifact.size && bytes.length !== entry.artifact.size) ||
-                    (entry.artifact.sha256 && sha256(bytes) !== entry.artifact.sha256)) {
+                if (!matches(bytes)) {
                     throw new Error('download does not match the catalog (size or sha256)');
                 }
                 // the checked bytes, root's alone, are what the deploy tool reads
@@ -4043,6 +4095,24 @@ class Updater {
 
     /* One request; returns the reason it is refused, null when the state
      * answers it, or undefined when it answers later through reply(msg). */
+    editionMigration() {
+        if (!this.conf.tool_root) {
+            return null;
+        }
+        const root = path.join(this.conf.tool_root, 'mgu-deploy', 'edition-migrations');
+        const active = path.join(root, 'active.json');
+        try {
+            const marker = readJson(active);
+            if (!marker || !/^[a-f0-9]{64}$/.test(marker.id || '')) {
+                return { id: 'unknown', phase: 'recovery-needed' };
+            }
+            const journal = readJson(path.join(root, marker.id, 'journal.json'));
+            return { id: marker.id, phase: journal.phase || 'recovery-needed' };
+        } catch (e) {
+            return fs.existsSync(active) ? { id: 'unknown', phase: 'recovery-needed' } : null;
+        }
+    }
+
     handle(req, reply) {
         if (cnSources.enabled(this.conf) &&
             ['login-start', 'login-cancel', 'token-add', 'token-remove', 'source-probe'].indexOf(req.op) >= 0) {
@@ -4050,6 +4120,11 @@ class Updater {
         }
         if (PRIVILEGED.indexOf(req.op) >= 0 && !this.authorized(req.secret) && !(req.op === 'reboot' && this.storeRebootsWithoutSecret())) {
             return 'forbidden';
+        }
+        const migration = this.editionMigration();
+        if (migration && ['status', 'hello', 'logs', 'check'].indexOf(req.op) < 0 &&
+            !(req.op === 'reboot' && migration.phase === 'awaiting-verification')) {
+            return `edition migration ${migration.id} is ${migration.phase}; finish or restore it before another change`;
         }
         switch (req.op) {
         case 'status': return null;
@@ -4315,6 +4390,9 @@ class Updater {
                 this.scanUsb();
                 this.scanTokens();
                 this.watchPlaced();
+                if (this.queue.length && !this.busy && !this.editionMigration()) {
+                    this.next();
+                }
                 if (this.uidsPending) {
                     this.checkUids();
                 }

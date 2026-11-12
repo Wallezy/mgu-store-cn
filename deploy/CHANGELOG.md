@@ -2,11 +2,30 @@
 
 ## Unreleased
 
+- The CN installer verifies a complete local distribution snapshot and stages a matching migration runner. Plans bind package hashes, the linked candidate, installed contents, firmware and source identities before any component replacement.
+- ID7 migration retains compatible identical packages, reinstalls ordinary same-version apps with their data and independent recovery packages, and limits same-version Waze tool changes to its log presentation. Same-version maintenance tools, unknown identities and downgrades are refused.
+- Persistent migration journals block competing deployment writes, keep a private recovery runner and support explicit status, post-restart content verification and rollback. Nested installs do not update the deploy tool outside its recorded step.
+
 - CN first-install reads updater identity before transfer and refuses a same/newer unverified payload or a local configuration that overrides the CN channel. It does not force a downgrade. Installation completion leaves active-channel and online-update acceptance explicit.
 
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+- `mgu-install.js`: while finding the head unit, a download, or the install or removal on the head unit takes longer than 30 s, a line about every 30 s says it is still going, such as `the head unit is still installing (2 min)`. Ctrl+C (or SIGTERM) prints `stopped; run the same command again to finish` and exits as the signal would.
+- `mgu-install.js` `first-install`, `status`, `uninstall` and `token`: when the head unit was found (its hotspot address answers on port 22 without SSH, or the ENET gateway reports its address) but its SSH does not answer, they say `found the head unit at <address>, but its SSH is closed: enable root SSH first, then run this again`.
+- `mgu-install.js usb-repo` copies each app icon a catalog lists beside the stick's `catalog.json`, checked against its `iconSha256`, so the Store shows it from the stick. An icon that cannot be read or does not match is left out, said, and the stick is written all the same.
+
+## 0.8.14
+
+- `--read-only` belongs to `status` alone: any other command given it refuses (exit 2) and changes nothing.
+
+## 0.8.13
+
+- On iDrive 7, an app of ours the app manager registered without a `custom_apps.json` entry, such as one it put back from `preinstalled_apps` itself, gets its tile again: `status` run as root and every app install list it, from the app manager's next start, and an install in which every app is current (re-running the installer's `first-install`) lists it, or finds it listed since the app manager started, and restarts the app manager once.
+
+## 0.8.12
+
+- Installing or updating an app, or carrying a kept data folder into one, removes the code cache of its earlier bundle (`data/app.js.bytecode`). The head unit's Node accepts that cache for any bundle of the same length, so an update that kept the length would run the earlier version's code.
 
 ## 0.8.11
 

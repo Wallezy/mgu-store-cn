@@ -244,7 +244,11 @@ which connection they used:
    (`ssh -b`), so the link-local route goes out of the ENET interface
    without a relay. The address that answered is remembered.
 
-When nothing answers it stops before downloading anything, naming the
+When the head unit was found but its SSH does not answer (the hotspot's
+address refuses port 22 or answers there without SSH, or the gateway
+reported an address whose port 22 does not answer), it stops with
+`found the head unit at <address>, but its SSH is closed: enable root SSH
+first, then run this again`. When nothing answers it stops before downloading anything, naming the
 hotspot, the ENET cable and `--host`; on Linux also how to give the ENET
 adapter a link-local address (`nmcli con mod <its connection>
 ipv4.method link-local`) when no interface has one, or, with several
@@ -263,6 +267,12 @@ and a unit's key can change. With OpenSSH 8.8 or newer it adds
 `HostKeyAlgorithms=+ssh-rsa` and `PubkeyAcceptedAlgorithms=+ssh-rsa`,
 which the unit's sshd needs.
 `--arm-debug` stays with `deploy/hu`.
+
+While a step takes longer than 30 s (finding the unit, a download, the
+install or removal on the head unit) it prints one line about every 30 s,
+such as `the head unit is still installing (2 min)`. Stopped with Ctrl+C
+(or SIGTERM), it prints `stopped; run the same command again to finish`
+and exits as the signal would.
 
 ```sh
 node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [ssh options]
@@ -453,7 +463,11 @@ updater then updates from it what that source installed
 releases or package files are `uninstallable`)
 and each artifact beside it under a relative URL; an `.mgu` keeps its file
 name and is listed as `<id>@<version>.tgz`, which the deploy tool installs
-by its content. A folder is written next to the old one and replaces it
+by its content. Each icon a catalog entry lists (`icon`) is copied beside
+it as `<id>.png`, checked against its `iconSha256`, and the entry names
+that file; an icon that cannot be read or does not match is left out,
+saying so, and never stops the stick (an `https` icon stays listed for
+the updater to fetch when online). A folder is written next to the old one and replaces it
 once complete, so the stick holds the newer versions only; other folders
 and the stick's other files stay. A root-service package of another
 `mguService`, a folder over the updater's limits (catalog.json over 1 MiB, a checkout over
@@ -1366,6 +1380,14 @@ The app manager installs our apps itself.
   is not restarted and the boot unit lists the apps from the next start.
   A copy that does not build leaves the fallback off, the install stands,
   and `status --json` gives the reason as `fallback.refused`.
+- **Unlisted apps.** On iDrive 7, an app of ours (`mguLocalOnly`) the
+  manager has registered from any source, its own reinstall from
+  `preinstalled_apps` included, that `custom_apps.json` does not list has
+  no tile. `status` run as root and every app install list it, and its
+  tile shows from the manager's next start (with the fallback lost, once
+  an install turns it on again). An install in which every app is current
+  lists it and restarts the manager once, as for a lost fallback; so does
+  one after a run that listed an app while the running manager was up.
 - **Start type.** `custom_apps.json` lists every app with
   `-appStartType` `manually`, or the value its `package.json` names in
   `"mguAppStartType"` (`autostart`, `lum` or `manually`; any other value

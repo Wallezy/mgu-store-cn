@@ -27,4 +27,8 @@ jobs:
         run: sh native/mgu-updater/test/run.sh
       - name: Local installer
         run: node deploy/test/cn_installer.js
+      - name: Distribution installer
+        run: node deploy/test/edition_installer.js
+      - name: Deployment and migration transactions
+        run: sh deploy/test/run.sh
 # These fixtures do not set release-check/cn-integration.

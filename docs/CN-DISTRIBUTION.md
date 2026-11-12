@@ -3,6 +3,10 @@
 Status: **development; not approved for vehicle installation**.
 状态：**开发中，尚未通过车机安装、更新顺序与恢复验收**。
 
+The [migration candidate](CN-MIGRATION.md) provides complete-snapshot planning,
+supported ID7 replacements and transaction recovery. It does not establish the
+integration approval needed to enable an installation release.
+
 This community distribution is based on `robertnisipeanu/mgu-store` and
 `robertnisipeanu/idrive-apps`. Original authorship and licenses remain intact.
 It is not an official BMW product or an upstream-endorsed release.

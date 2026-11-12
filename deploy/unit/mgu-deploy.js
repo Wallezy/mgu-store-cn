@@ -55,7 +55,7 @@ var os = require('os');
 process.umask(0o022);
 
 /* deploy/component.json's version; the release sets both. */
-var VERSION = '0.8.11';
+var VERSION = '0.8.15';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -3870,6 +3870,9 @@ function ensureShim() {
     }
 }
 function selfInstall() {
+    /* The edition journal owns the explicit deploy-tool step and its recovery.
+     * Nested app/tool operations must not replace it out of that order. */
+    if (editionActiveRunner) return;
     mkdirp(DEPLOY_DIR);
     var versions = path.join(DEPLOY_DIR, 'versions'), before = currentTarget(DEPLOY_DIR);
     var cur = readJsonOrNull(path.join(DEPLOY_DIR, 'current', 'component.json'));
@@ -4549,8 +4552,42 @@ function cleanInterrupted(state) {
  * cached: an app provisioning once dropped caches both false, and the
  * manager installs no app the listing disables. */
 function listApp(a, entry) {
-    customAppsPut(a.id, Object.assign({}, entry ? entry.provisioningCache : null, { '-enabled': 'true', '-allowed': 'true' }),
+    return customAppsPut(a.id, Object.assign({}, entry ? entry.provisioningCache : null, { '-enabled': 'true', '-allowed': 'true' }),
         a.pkg.mguAppStartType || 'manually');
+}
+/* The code cache the stock OAP entry point (package.json main, the
+ * firmware's runner.js) keeps of an app's bundle: <data>/<bundle>.bytecode,
+ * both paths from the runnerConfig.json beside the entry point (default
+ * ../../data and ./app.js). The firmware's V8 takes a cache made for any
+ * source of the same length, so a cache another version of the app left
+ * runs that version's code; without it the entry point compiles the
+ * bundle and writes a new cache. The app owns its home: the cache goes
+ * only when the home, its data folder and every folder on the way are real
+ * folders, no links. */
+function clearCodeCache(id, uid) {
+    if (!uid) return;
+    var home = appHome(uid), source = path.join(home, 'source'), data = path.join(home, 'data');
+    var pkg = readJsonOrNull(path.join(source, 'package.json'));
+    var main = pkg && typeof pkg.main === 'string' ? path.join(source, pkg.main) : path.join(source, 'javascript', 'runner.js');
+    var cfg = readJsonOrNull(path.join(path.dirname(main), 'runnerConfig.json')) || {};
+    var dataRel = typeof cfg.DATA_RELATIVE_PATH === 'string' ? cfg.DATA_RELATIVE_PATH : '../../data';
+    var jsRel = typeof cfg.JS_RELATIVE_PATH === 'string' ? cfg.JS_RELATIVE_PATH : './app.js';
+    var cache = path.join(path.dirname(main), dataRel, jsRel + '.bytecode'), rel = path.relative(data, cache);
+    if (!rel || rel.split(path.sep)[0] === '..' || path.isAbsolute(rel)) return;
+    var dir = home, parts = ['data'].concat(rel.split(path.sep).slice(0, -1)), st;
+    for (var i = 0; i <= parts.length; i++) {
+        st = lstatOrNull(dir);
+        if (!st || !st.isDirectory()) return;
+        if (i < parts.length) dir = path.join(dir, parts[i]);
+    }
+    st = lstatOrNull(cache);
+    if (!st || !st.isFile()) return;
+    try {
+        fs.unlinkSync(cache);
+        say(id + ': its code cache goes (' + cache + ')');
+    } catch (e) {
+        warn(id + ': its code cache ' + cache + ' stays: ' + e.message + '; the app may run its earlier code until it is removed');
+    }
 }
 /* Privacy, the fallback, the package, the app listed by the fallback; then
  * the running manager installs or updates it in place, or else one bounce:
@@ -4583,6 +4620,7 @@ function installApp(a, state, decision) {
         bounceManager();
     }
     if (existing) waitStartedUp('placing ' + a.id + ' ' + a.version);
+    if (existing) clearCodeCache(a.id, existing.uid);
     entry = existing ? readJsonOrNull(appEntryFile(a.id)) : null;
     var kc = existing ? lstatOrNull(keychainFile(existing.uid)) : null;
     a.noKeychain = existing && !(kc && kc.size > 0) ? existing.uid : null;
@@ -4634,6 +4672,7 @@ function installApp(a, state, decision) {
             !existing && bytecodeStubs() ? installAfterBounce(a) : watchInstall(a);
         if (existing && uid !== existing.uid) warn(a.id + ' runs as uid ' + uid + ' now; its data stays in ' + appHome(existing.uid));
     }
+    clearCodeCache(a.id, uid);
     var tf = tileFlags(readJsonOrNull(appEntryFile(a.id)));
     if (!tf.visible && (tf.allowed || tf.enabled)) {
         warn(a.id + "'s tile stays hidden: provisioning has its own section for " + a.id + ' (-allowed ' +
@@ -4690,6 +4729,7 @@ function carryData(id, stash, oldUid, oldGid, fresh) {
     else if (cur) fs.rmdirSync(dest);
     fs.renameSync(stash, dest);
     say(id + "'s data carried over");
+    clearCodeCache(id, now.uid);
     return true;
 }
 /* state.json data_stash, {<id>: [{path, uid, gid}, ...]}, oldest first:
@@ -5456,6 +5496,36 @@ function syncListingId8() {
         process.stdout.write = out;
     }
 }
+/* status on iDrive 7, run as root: lists the apps id7Unlisted() names. The
+ * running manager reads the listing when provisioning reaches it, so their
+ * tiles show from the manager's next start, or, with the fallback lost,
+ * once an install turns it on again; an install restarts the manager that
+ * has not taken them. Null on a unit with neither the fallback nor an app of ours. */
+function syncListingId7() {
+    if (isId8() || (!fallbackPresent() && !ourInstalledApps().length)) return null;
+    var out = process.stdout.write, locked = false;
+    process.stdout.write = function () { return true; };
+    try {
+        if (!id7Unlisted().length) return { state: 'ok', reason: 'every app of ours is listed' };
+        var held = statusHeld();
+        if (held) return { state: 'pending', reason: held };
+        if (!runningInstalled() && !FAKE) return { state: 'pending', reason: 'this deploy tool is not the installed one' };
+        locked = statusLock();
+        if (!locked) return { state: 'pending', reason: 'another mgu-deploy run holds the lock' };
+        var s = loadState(), ids = listUnlistedId7(s);
+        if (!ids.length) return { state: 'ok', reason: 'every app of ours is listed' };
+        saveState(s);
+        var when = fallbackLost() ? 'once an install turns the provisioning fallback on again' : 'from the next start of the app manager';
+        process.stderr.write('listed for the provisioning fallback, ' + when + ': ' + ids.join(', ') + '\n');
+        return { state: 'changed', reason: 'listed ' + ids.join(', ') + '; their tiles show ' + when };
+    } catch (e) {
+        process.stderr.write('mgu-deploy: our apps not listed again: ' + e.message + '\n');
+        return { state: 'error', reason: e.message };
+    } finally {
+        if (locked) releaseLock();
+        process.stdout.write = out;
+    }
+}
 /* The fallback's boot unit runs it before MainApp-21; another run holding
  * the lock leaves it to status. */
 function cmdRelist() {
@@ -5535,6 +5605,7 @@ function installLiveId8(a, existing, state, backup) {
     var m = inplaceManager();
     if (!m.pid) { say(a.id + ' ' + a.version + ' is not installed in place: ' + m.why); return false; }
     if (existing) waitStartedUp('updating ' + a.id + ' ' + a.version);
+    if (existing) clearCodeCache(a.id, existing.uid);
     var kc = existing ? lstatOrNull(keychainFile(existing.uid)) : null;
     a.noKeychain = existing && !(kc && kc.size > 0) ? existing.uid : null;
     var placed = DAS.map(dasFile).concat([customAppsFile()], id8LiveTouched(a.id, a.version)
@@ -5555,6 +5626,7 @@ function installLiveId8(a, existing, state, backup) {
         restoreSnapshot(backup, placed);
         return false;
     }
+    clearCodeCache(a.id, uid);
     queueId8({ id: a.id });
     return true;
 }
@@ -6326,14 +6398,45 @@ function fallbackLost() {
     if (!Object.keys(readCustomApps()).length) return false;
     return !(fallbackPresent() && (!binds() || boundToCopy()));
 }
+/* iDrive 7: apps of ours the app manager has registered, from whatever
+ * source, that custom_apps.json does not list: the fallback gives them no
+ * section, so their tiles stay hidden. A manager that reinstalls an app
+ * from preinstalled_apps on its own registers it without this tool. The
+ * retired installer's leftovers list apps by themselves. */
+function id7Unlisted() {
+    if (isId8() || retiredBackups().length || !mgrDataReady()) return [];
+    var listed = readCustomApps();
+    return ourInstalledApps().filter(function (a) { return !Object.prototype.hasOwnProperty.call(listed, a.id); });
+}
+/* Lists them, recorded in state.json (listed_unseen: the running manager's
+ * pid and the apps) until the manager restarts: a manager that started
+ * before an app was listed gives it no tile. */
+function listUnlistedId7(state) {
+    var ids = id7Unlisted().filter(function (a) { return listApp(a, a.entry); }).map(function (a) { return a.id; });
+    if (!ids.length) return [];
+    say('listed ' + ids.join(', ') + ' in ' + customAppsFile() + ': registered without a listing, so their tiles were hidden');
+    var pid = managerPid();
+    if (pid) {
+        var was = listedUnseen(state);
+        state.listed_unseen = { pid: pid, apps: was.concat(ids.filter(function (id) { return was.indexOf(id) < 0; })) };
+    }
+    return ids;
+}
+/* The apps listed while the running manager runs, which it has not taken. */
+function listedUnseen(state) {
+    var r = state.listed_unseen;
+    if (r && (!r.pid || r.pid !== managerPid())) { delete state.listed_unseen; r = null; }
+    return r && Array.isArray(r.apps) ? r.apps : [];
+}
 /* What a restarted app manager needs to initialise: without them it fails
  * its start again and again, and oapcontroller wipes every app at the
  * third failure in a row. */
 var PLATFORM_UNITS = ['vsomeipd.service', 'hmi.service'];
-/* An install with no app work on a unit where fallbackLost(): the fallback
- * goes on again and the manager restarts once (bounceManager's rules), so
- * the tiles show; with PLATFORM_UNITS not running, the boot unit lists
- * them from the next start instead. A copy that does not build, or a
+/* An install with no app work on a unit where fallbackLost(),
+ * id7Unlisted() or listedUnseen(): the unlisted apps are listed, the
+ * fallback goes on again and the manager restarts once (bounceManager's
+ * rules), so the tiles show; with PLATFORM_UNITS not running, the boot
+ * unit lists them from the next start instead. A copy that does not build, or a
  * failure, leaves the fallback as it was, recorded in state.json
  * (fallback_refused) for status; the install stands. */
 function relistApps(state) {
@@ -6341,6 +6444,7 @@ function relistApps(state) {
     try {
         preflightFallback();
         backup = takeSnapshot('fallback', fallbackTouched());
+        var listedNow = listUnlistedId7(state).concat(listedUnseen(state));
         ensureFallback(state, false);
         var down = PLATFORM_UNITS.filter(function (u) { return unitState(u, 'is-active') !== 'active'; });
         if (down.length) {
@@ -6350,9 +6454,11 @@ function relistApps(state) {
             return;
         }
         var m = managerStart();
-        if (m && fallbackPresent() && hookAnnounced(m)) return;
+        if (m && fallbackPresent() && hookAnnounced(m) && !listedNow.length) return;
         say('our apps are listed again: restarting the app manager so their tiles show');
-        if (bounceManager() && inplaceHookOf(fs.readFileSync(FALLBACK_COPY, 'utf8')) !== null) inplaceManager();
+        var bounced = bounceManager();
+        if (bounced) delete state.listed_unseen;
+        if (bounced && inplaceHookOf(fs.readFileSync(FALLBACK_COPY, 'utf8')) !== null) inplaceManager();
     } catch (e) {
         warn('our apps\' tiles stay hidden: ' + e.message);
         state.fallback_refused = e.message;
@@ -7103,6 +7209,10 @@ var EDITION_DIR = path.join(DEPLOY_DIR, 'edition-migrations');
 var EDITION_ACTIVE = path.join(EDITION_DIR, 'active.json');
 var EDITION_IDS = ['robertn_store', 'robertn_waze_cluster', 'mgu-deploy', 'mgu-updater',
     'mgu-python', 'mgu-render', 'mgu-uplink', 'app-privacy', 'cluster-render', 'waze-on-cluster'];
+var editionActiveRunner = false;
+function editionCheckpoint(name) {
+    if (FAKE && process.env.MGU_DEPLOY_TEST_EDITION_STOP === name) process.exit(86);
+}
 function editionId(value) {
     if (!/^[a-f0-9]{64}$/.test(value || '')) throw refuse('migration needs an exact SHA-256 plan id');
     return value;
@@ -7155,6 +7265,22 @@ function editionCurrent(id) {
     if (lstatOrNull(path.join(CFG.varOpt, id, 'current'))) throw refuse('unreadable installed tool: ' + id);
     return null;
 }
+function editionContent(file, rel) {
+    var data = fs.readFileSync(file);
+    if (rel === 'javascript/build.json') {
+        /* The linker records the actual compilation time. It is not code and
+         * must not invalidate an otherwise identical inspected candidate. */
+        var build = JSON.parse(data.toString('utf8'));
+        delete build.buildTimestamp;
+        return sha256Buf(Buffer.from(JSON.stringify(build)));
+    }
+    return sha256Buf(data);
+}
+function editionCandidate(a) {
+    if (a.kind !== 'app') return sha256File(a.file);
+    return sha256Buf(Buffer.from(walk(a.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); })
+        .map(function (e) { return e.rel + ':' + editionContent(e.path, e.rel); }).sort().join('\n')));
+}
 function editionMatches(a) {
     var now = editionCurrent(a.id);
     if (!now || now.version !== a.version || now.kind !== a.kind) return false;
@@ -7162,7 +7288,7 @@ function editionMatches(a) {
         var app = installedApp(a.id), dir = path.join(appHome(app.uid), 'source');
         return walk(a.pkgDir, '', []).filter(function (e) { return e.stat.isFile(); }).every(function (e) {
             var p = path.join(dir, e.rel), st = lstatOrNull(p);
-            return st && st.isFile() && sha256File(p) === sha256File(e.path);
+            return st && st.isFile() && editionContent(p, e.rel) === editionContent(e.path, e.rel);
         });
     }
     var root = path.join(CFG.varOpt, a.id, 'current');
@@ -7222,6 +7348,43 @@ function editionPresentationOnly(a) {
     return declaration(old) === declaration(a.component) &&
         a.component.files.some(function (f) { return f.path === 'logs.js'; });
 }
+function editionOwnership() {
+    var sources = readJsonOrNull(sourcesFile()), origins = readJsonOrNull(path.join(updaterDir(), 'state', 'origins.json')) || {};
+    var aliases = readJsonOrNull(path.join(updaterDir(), 'state', 'aliases.json')) || {};
+    if (lstatOrNull(sourcesFile()) && (!sources || !Array.isArray(sources.sources))) {
+        throw refuse('unreadable updater source definitions');
+    }
+    var list = sources ? sources.sources : [], groups = ['mgu-store', 'idrive-apps'], owners = {}, blocked = [];
+    groups.forEach(function (group) {
+        var matches = list.filter(function (s) {
+            return s.type === 'github' && (!s.channel || s.channel === 'releases') &&
+                ['robertnisipeanu/' + group, 'wallezy/' + group + '-cn'].indexOf(String(s.repo || '').toLowerCase()) >= 0 ||
+                s.type === 'https' && [
+                    'https://mgu.walle.pw/mgu/cn/' + group + '/catalog.json',
+                    'https://mgu.walle.pw/mgu/' + group + '/catalog.json',
+                    'https://walle-mgu.oss-cn-hangzhou.aliyuncs.com/mgu/' + group + '/catalog.json',
+                    'https://walle-jenkins.oss-cn-beijing.aliyuncs.com/mgu/' + group + '/catalog.json'
+                ].indexOf(s.url) >= 0;
+        });
+        if (list.some(function (s) { return (s.id === group || group === 'mgu-store' && s.builtin) && matches.indexOf(s) < 0; })) {
+            blocked.push({ id: group, reason: 'custom source conflicts with the CN managed identity' });
+        }
+        var ids = matches.map(function (s) { return s.id; }).concat(group), used = {};
+        Object.keys(origins).forEach(function (id) {
+            if (ids.indexOf(origins[id].source) >= 0) used[origins[id].source] = true;
+        });
+        Object.keys(aliases).forEach(function (key) {
+            var source = key.split(':')[0];
+            if (ids.indexOf(source) >= 0) used[source] = true;
+        });
+        var names = Object.keys(used);
+        if (names.length > 1 || group === 'mgu-store' && names.length && names[0] !== group) {
+            blocked.push({ id: group, reason: 'multiple/incompatible installed source identities' });
+        }
+        owners[group] = names[0] || group;
+    });
+    return { owners: owners, origins: origins, blocked: blocked };
+}
 function editionPrepare(args, stage) {
     if (unitInfo().hmi !== 'ID7') throw refuse('edition migration currently supports ID7 only');
     if (!args.artifacts.length) throw refuse('edition migration requires explicit artifacts');
@@ -7237,6 +7400,7 @@ function editionPrepare(args, stage) {
             !/^[a-f0-9]{64}$/.test(c.sha256 || '')) throw refuse('invalid migration manifest component');
         declared[c.id] = c;
     });
+    var ownership = editionOwnership();
     var seen = {}, artifacts = args.artifacts.map(function (file) {
         var a = validateArtifact(path.resolve(file), stage), why = incompatible(a);
         if (seen[a.id] || EDITION_IDS.indexOf(a.id) < 0) throw refuse('unsupported or duplicate migration component: ' + a.id);
@@ -7248,7 +7412,7 @@ function editionPrepare(args, stage) {
         if (a.kind === 'app') a = prepareApp(a, stage);
         a.incoming = incoming;
         return a;
-    }), steps = [], blocked = [];
+    }), steps = [], blocked = ownership.blocked.slice();
     if (Object.keys(seen).length !== Object.keys(declared).length) throw refuse('migration manifest has missing packages');
     /* The manifest carries app release requirements as well as native ones. */
     var ordered = [], visiting = {}, complete = {};
@@ -7285,6 +7449,8 @@ function editionPrepare(args, stage) {
             try { backup = editionOldPackage(a, stage); } catch (e) { problem = e.message; }
         }
         if (a.kind === 'tool' && foreignUnit(a.component)) problem = 'another manager owns the component';
+        var origin = ownership.origins[a.id], group = ['robertn_waze_cluster', 'waze-on-cluster', 'cluster-render'].indexOf(a.id) >= 0 ? 'idrive-apps' : 'mgu-store';
+        if (origin && origin.source !== ownership.owners[group]) problem = 'installed component belongs to an unmapped source';
         if (a.id === 'mgu-updater') {
             var conf = fs.readFileSync(path.join(a.dir, 'files', 'updater.conf'), 'utf8');
             var local = path.join(updaterDir(), 'updater.local.conf');
@@ -7297,7 +7463,7 @@ function editionPrepare(args, stage) {
         a.action = action;
         if (problem) blocked.push({ id: a.id, reason: problem });
         steps.push({ id: a.id, kind: a.kind, version: a.version, artifact: a.incoming,
-            candidate: sha256File(a.file),
+            candidate: editionCandidate(a),
             before: before, action: problem ? 'blocked' : action,
             recovery: backup ? sha256File(backup) : null });
     });
@@ -7308,7 +7474,8 @@ function editionPrepare(args, stage) {
     });
     var plan = { schema: 1, distribution: 'walle-cn', installer: release.installer,
         release: sha256File(args.distributionManifest), unit: unitInfo(), boot: bootId(),
-        sources: editionSources(), steps: steps.sort(function (a, b) { return a.id < b.id ? -1 : 1; }),
+        sources: editionSources(), owners: ownership.owners,
+        steps: steps.sort(function (a, b) { return a.id < b.id ? -1 : 1; }),
         unmapped: unmapped, blocked: blocked };
     return { plan: plan, id: sha256Buf(Buffer.from(JSON.stringify(plan))), artifacts: artifacts };
 }
@@ -7377,8 +7544,10 @@ function editionApply(journal, step, restoring, stage) {
     if (!editionMatches(a)) throw fail(step.id + ': installed contents do not match the candidate');
 }
 function editionRestore(journal, stage) {
+    var sourceChanged = JSON.stringify(editionSources()) !== JSON.stringify(journal.sourcesAfter || journal.plan.sources);
     journal.phase = 'restoring'; editionWrite(journal);
     var failed = [];
+    if (sourceChanged) failed.push('source/origin state changed outside the recorded transaction; preserved for inspection');
     journal.steps.slice().reverse().forEach(function (step) {
         if (['changing', 'applied', 'restoring', 'restore-failed'].indexOf(step.phase) < 0) return;
         if (step.phase === 'applied' && step.after &&
@@ -7400,6 +7569,22 @@ function editionRestore(journal, stage) {
         } catch (e) { step.phase = 'restore-failed'; failed.push(step.id + ': ' + e.message); }
         editionWrite(journal);
     });
+    if (!sourceChanged) {
+        Object.keys(journal.plan.sources).forEach(function (name) {
+            try {
+                var target = path.join(updaterDir(), name), expected = journal.plan.sources[name];
+                if (expected) {
+                    var saved = path.join(EDITION_DIR, journal.id, 'source-state', name);
+                    if (sha256File(saved) !== expected) throw fail('saved source-state checksum differs');
+                    if (!fs.existsSync(target) || sha256File(target) !== expected) {
+                        writeAtomic(target, fs.readFileSync(saved), (journal.sourceModes || {})[name] || 0o600);
+                    }
+                } else if (lstatOrNull(target)) {
+                    fs.unlinkSync(target); fsyncDir(path.dirname(target));
+                }
+            } catch (e) { failed.push(name + ': ' + e.message); }
+        });
+    }
     journal.phase = failed.length ? 'recovery-needed' : 'restored';
     journal.errors = failed; editionWrite(journal);
     if (failed.length) throw fail('migration recovery incomplete: ' + failed.join('; '));
@@ -7417,7 +7602,7 @@ function cmdEditionMigrate(args) {
         var root = path.join(EDITION_DIR, prepared.id);
         if (lstatOrNull(root)) throw refuse('migration record already exists; inspect its status');
         mkdirp(root, 0o700);
-        journal = { schema: 1, id: prepared.id, phase: 'prepared', plan: prepared.plan, steps: [] };
+        journal = { schema: 1, id: prepared.id, phase: 'prepared', plan: prepared.plan, steps: [], sourceModes: {} };
         /* Every candidate is compiled and every old payload is durable before
          * the first installed component changes. */
         prepared.artifacts.forEach(function (a) {
@@ -7427,22 +7612,35 @@ function cmdEditionMigrate(args) {
             if (a.beforeFile) writeAtomic(path.join(root, 'before', a.id + '.tgz'), fs.readFileSync(a.beforeFile), 0o600);
             journal.steps.push(step);
         });
+        Object.keys(journal.plan.sources).forEach(function (name) {
+            if (journal.plan.sources[name]) {
+                var file = path.join(updaterDir(), name);
+                if (sha256File(file) !== journal.plan.sources[name]) throw refuse('source state changed while preparing recovery');
+                journal.sourceModes[name] = fs.lstatSync(file).mode & 0o7777;
+                writeAtomic(path.join(root, 'source-state', name), fs.readFileSync(file), 0o600);
+            }
+        });
         /* A private runner remains usable if the live deploy tool changes. */
         SELF_FILES.forEach(function (f) {
             writeAtomic(path.join(root, 'runner', f.path), fs.readFileSync(selfFile(f.path)), octalMode(f.mode));
         });
         editionWrite(journal);
         writeAtomic(EDITION_ACTIVE, JSON.stringify({ id: journal.id }) + '\n', 0o600);
+        editionActiveRunner = true;
         journal.phase = 'applying'; editionWrite(journal);
         try {
             journal.steps.forEach(function (step) {
                 if (step.action === 'retain') { step.phase = 'retained'; editionWrite(journal); return; }
                 step.phase = 'changing'; editionWrite(journal);
+                editionCheckpoint('before-replace');
                 editionApply(journal, step, false, stage);
+                editionCheckpoint('after-replace');
                 step.after = editionCurrent(step.id);
                 step.phase = 'applied'; editionWrite(journal);
             });
-            journal.phase = 'awaiting-verification'; editionWrite(journal);
+            journal.phase = 'awaiting-verification';
+            journal.sourcesAfter = editionSources();
+            editionWrite(journal);
             say(JSON.stringify({ id: journal.id, phase: journal.phase, installed: true, verified: false }));
             return 0;
         } catch (e) {
@@ -7451,7 +7649,7 @@ function cmdEditionMigrate(args) {
             catch (restore) { throw fail(e.message + '; ' + restore.message); }
             throw fail(e.message + '; previous payloads restored');
         }
-    } finally { rmrf(stage); }
+    } finally { editionActiveRunner = false; rmrf(stage); }
 }
 function cmdEditionStatus(args) {
     var id = args.positional[0] || editionPending();
@@ -7476,10 +7674,11 @@ function cmdEditionRollback(args) {
     var stage = editionStage();
     try {
         writeAtomic(EDITION_ACTIVE, JSON.stringify({ id: journal.id }) + '\n', 0o600);
+        editionActiveRunner = true;
         editionRestore(journal, stage);
         say(JSON.stringify({ id: journal.id, phase: journal.phase }));
         return 0;
-    } finally { rmrf(stage); }
+    } finally { editionActiveRunner = false; rmrf(stage); }
 }
 function cmdEditionVerify(args) {
     var journal = editionRead(args.positional[0]), stage = editionStage();
@@ -7657,7 +7856,7 @@ function installRun(args, afresh) {
         if (apps && !id8) preflightFallback();
         /* every app current, the fallback lost: listed again after the
          * tools, with the one bounce app-privacy's waits for */
-        var relist = !apps && !noOap && !guardWhy() && fallbackLost();
+        var relist = !apps && !noOap && !guardWhy() && (fallbackLost() || id7Unlisted().length > 0 || listedUnseen(state).length > 0);
         privacyMayWait = apps && !id8 && managerListsNoApp() || relist;
         privacyWaitsRelist = relist;
         if (work.length) {
@@ -7680,6 +7879,8 @@ function installRun(args, afresh) {
                 if (!id8) {
                     try { cleanInterrupted(state); saveState(state); }
                     catch (e) { warn('what interrupted installs left was not looked at: ' + e.message); }
+                    try { if (listUnlistedId7(state).length) saveState(state); }
+                    catch (e) { warn('our unlisted apps were not listed: ' + e.message); }
                 }
             }
             var tx = {}, backup = takeSnapshot('install', artifactTouched(a));
@@ -8670,6 +8871,7 @@ function runCommand() {
         'appmanager', 'verify', 'remove-unused', 'edition-plan', 'edition-migrate', 'edition-rollback', 'edition-verify']
         .indexOf(args.command) >= 0;
     try {
+        if (args.readOnly && args.command !== 'status') throw refuse('--read-only is only for status');
         if (!FAKE && typeof process.getuid === 'function' && process.getuid() !== 0 && rootOnly) {
             throw refuse('run as root');
         }
@@ -8699,7 +8901,7 @@ function runCommand() {
         if (args.command === 'edition-status') return cmdEditionStatus(args);
         if (args.command === 'check') return cmdCheck(args);
         if (args.command === 'install') return cmdInstall(args);
-        if (args.command === 'status') { statusReadOnly = !!args.readOnly || !!editionPending(); syncMgrHome(); syncGuard(); syncStashes(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), syncListingId8()); }
+        if (args.command === 'status') { statusReadOnly = !!args.readOnly || !!editionPending(); syncMgrHome(); syncGuard(); syncStashes(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), isId8() ? syncListingId8() : syncListingId7()); }
         if (args.command === 'relist') {
             if (!FAKE && typeof process.getuid === 'function' && process.getuid() !== 0) throw refuse('run as root');
             return cmdRelist();

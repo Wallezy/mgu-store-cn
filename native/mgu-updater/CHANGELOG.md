@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+- An active edition migration pauses the update queue and refuses source and configuration changes. A normal restart remains available when the transaction awaits verification; queued work can resume once the migration is verified or restored.
+
 - The CN distribution reads its Store and map catalogs over HTTPS while preserving installed source identities. Known official and mirror definitions are normalized in memory; conflicting identities stop source changes instead of guessing.
 - CN catalogs use isolated, definition-bound caches, and an online updater trial requires its own complete CN catalog rather than an unrelated source response.
 - CN runtime disables GitHub sources and accounts without deleting their saved recovery data, and refuses GitHub download hosts through redirects as well.
+## 0.8.41
+
+- The phone page's Logs list the Renderer's journals (`mgu-render`, `mgu-render-hmi`) and the deploy tool's check after a restart (`mgu-deploy-verify`).
+
+## 0.8.40
+
+- Installing or updating an app or tool from a public repository's branch downloads only its own files and the shared files its build needs, instead of the whole repository. Update all downloads each shared file once.
+- Downloads resume where they stopped on a weak connection and keep trying while they make progress, instead of starting over and giving up after a few cuts.
 
 ## 0.8.39
 

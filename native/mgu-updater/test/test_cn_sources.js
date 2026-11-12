@@ -341,6 +341,46 @@ checking.checkSource('mgu-store').then(() => {
             assert.throws(() => cn.validateCatalog(def, parsed), /HTTPS/);
         });
     });
+}).then(() => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-edition-queue-'));
+    const dir = path.join(root, 'mgu-deploy', 'edition-migrations');
+    fs.mkdirSync(path.dirname(dir));
+    fs.mkdirSync(dir);
+    const id = 'c'.repeat(64);
+    fs.mkdirSync(path.join(dir, id));
+    fs.writeFileSync(path.join(dir, 'active.json'), JSON.stringify({ id }));
+    fs.writeFileSync(path.join(dir, id, 'journal.json'), JSON.stringify({ phase: 'applying' }));
+    const u = Object.assign(Object.create(Updater.prototype), {
+        conf: { tool_root: root, distribution_channel: cn.CHANNEL }, authorized: () => true,
+        queue: [], conflict: () => { throw new Error('should refuse before queue changes'); },
+        next: Updater.prototype.next
+    });
+    test('active migration blocks queue and source/network mutations', () => {
+        assert(/edition migration/.test(u.enqueue({ id: 'map', op: 'install' })));
+        assert.strictEqual(u.queue.length, 0);
+        ['install', 'source-add', 'source-remove', 'proxy-set', 'wifi-connect', 'reboot'].forEach((op) =>
+            assert(/edition migration/.test(u.handle({ op, id: 'map' }, () => {})), op));
+        assert.strictEqual(u.handle({ op: 'status' }, () => {}), null);
+        assert.strictEqual(u.next(), undefined);
+    });
+    test('normal restart is available while migration awaits verification', () => {
+        fs.writeFileSync(path.join(dir, id, 'journal.json'), JSON.stringify({ phase: 'awaiting-verification' }));
+        let rebooted = false;
+        u.reboot = () => { rebooted = true; return null; };
+        assert.strictEqual(u.handle({ op: 'reboot' }, () => {}), null);
+        assert(rebooted);
+    });
+    test('malformed migration state refuses writes and removal unblocks the queue', () => {
+        fs.writeFileSync(path.join(dir, 'active.json'), '{invalid');
+        assert(/recovery-needed/.test(u.enqueue({ id: 'map' })));
+        fs.unlinkSync(path.join(dir, 'active.json'));
+        assert.strictEqual(u.editionMigration(), null);
+    });
+    fs.unlinkSync(path.join(dir, id, 'journal.json'));
+    fs.rmdirSync(path.join(dir, id));
+    fs.rmdirSync(dir);
+    fs.rmdirSync(path.dirname(dir));
+    fs.rmdirSync(root);
 }).then(() => console.log(`${passed} CN source checks passed`)).catch((err) => {
     console.error(err);
     process.exitCode = 1;

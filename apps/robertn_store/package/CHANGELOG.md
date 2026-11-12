@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+- The CN distribution requires its migration-aware updater and deploy tool. Its candidate version is separate from the upstream Store while map application localization retains the app versions.
+
 - The CN updater's `github: false` capability hides GitHub accounts, token entry, sign-in and repository discovery in both UI modes. Source entry accepts HTTPS catalogs and the drawn keyboard offers `/catalog.json`. An updater without the capability retains its supported UI.
+## 0.9.37
+
+Tilting the controller right or down moves the focus to the nearest item that way: across the app grid, from the side menu to the grid, to a row's button. With idrive7-apps' controller gate loaded, tilting up and left moves it too, and tilting left with nothing further left goes back a page.
+
+## 0.9.36
+
+The Store page opens with the Apps filter selected.
 
 ## 0.9.35
 

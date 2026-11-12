@@ -271,9 +271,19 @@ commit). Without one: `releases` when the repo has a release, else
   `uninstallable` come from the entry, else from the component's own file. A component that
   cannot be used is left out and the source's `error` says why; the rest
   are listed.
-- GitHub: the files are read at the commit through the contents API, and
-  an install downloads the repo tarball at that commit (`/tarball/<sha>`,
-  at most `repo_max_bytes`; links in it are left out). A folder is read in
+- GitHub: the files are read at the commit through the contents API. An
+  install from a public repo reads the commit's tree (one API request) and
+  downloads only the files the component is made of (its folder, or a
+  service or preload tool's one file; for a build script, also its
+  `build.shared` paths and the script) from
+  `raw.githubusercontent.com`, gzipped on the way, each checked against its
+  git id; a build that fails with only those runs again with the whole
+  repo. A build without `build.shared`, a private repo, or a tree or file
+  that cannot be read downloads the repo tarball at the commit
+  (`/tarball/<sha>`, at most `repo_max_bytes`; links in it are left out).
+  While queued installs run, the tree, the files (by git id, up to 64 MB)
+  and the last tarball are kept for the next ones, so an Update all reads
+  each once; they are dropped when the queue is empty. A folder is read in
   place.
 - On a branch, a commit of the same version is an update too when it
   changes the component: a row's `revision` is the short commit it would
@@ -650,12 +660,17 @@ fetcher can change nothing it installs.
   as it is then, so a download carries on over a network joined meanwhile.
 - A download whose connection breaks (cut mid-transfer, reset, one of those
   waits over, no connection) or that gets a 500, 502, 503 or 504 is tried again
-  after 1, 2, 4 and 8 s, up to 4 times in a row without getting further, 200
-  tries in all. Where the server takes byte ranges with a strong ETag
-  (GitHub's release downloads do; `codeload.github.com` does not), the next
-  try asks for the rest (`Range`, `If-Range`) and adds it to what came;
-  otherwise the file starts over. The size and sha256 are checked on the
-  whole file. A POST, a refused certificate, an unknown host name and other
+  after 1, 2, 4 and 8 s, up to 4 times in a row without getting further; a
+  try that gets further starts that count over, so a slow, flaky link
+  carries on as long as the file grows. Where the server takes byte ranges
+  (GitHub's release downloads and `raw.githubusercontent.com` do;
+  `codeload.github.com` does not), the next try asks for the rest (`Range`,
+  with the strong ETag or Last-Modified in `If-Range`; a file of a commit
+  goes on without either) and adds it to what came; otherwise the file
+  starts over, a try that counts as not getting further. The size and
+  sha256 (a repo file's git id) are checked on the whole file; one pieced
+  together from several tries that does not match is downloaded once more
+  from the start. A POST, a refused certificate, an unknown host name and other
   HTTP answers are not tried again.
 
 ### Through a proxy
@@ -870,11 +885,13 @@ on and off (privileged `web` op) and shows its QR code.
   fields; the daemon checks their values.
   Logs: `log_file` (and `.1`) read directly, the last 64 KiB, only while it
   is the daemon's own regular file; the journals of `mgu-updater`,
-  `mgu-uplink` and `mgu-app-fallback` (the deploy tool's unit; its own
-  runs log as `deploy:` lines in `log_file`) through the privileged `logs`
+  `mgu-uplink`, `mgu-app-fallback` (the deploy tool's unit; its own
+  runs log as `deploy:` lines in `log_file`), the Renderer's `mgu-render`
+  and `mgu-render-hmi`, and `mgu-deploy-verify` (the deploy tool's check
+  after a restart) through the privileged `logs`
   op, since the journal is not readable to the web uid:
   `{"op":"logs","unit","lines","secret"}` → `{"type":"logs","unit","text"}`
-  (`journalctl -u <unit> -n <lines> --no-pager`, those three units only,
+  (`journalctl -u <unit> -n <lines> --no-pager`, those units only,
   1–1000 lines). Requests carry `rid`; the daemon's direct reply to one
   (state, error or logs) carries it back.
 
@@ -1235,9 +1252,6 @@ files), with
   doom2, with its download), its update landing on doom2, a package built
   elsewhere blocked, a build that comes out under the old id refused, a
   source package made over and installed as `shared2`, the removal;
-  `test/test_rename_real.js <idrive7-apps clone> [<app>...]` builds its apps
-  under another id with the repo's own `build.py` on the machine's python3
-  (`run.sh` runs it when `IDRIVE7_APPS` names a clone);
 - the head unit and compatibility: the unit from the deploy tool, an
   iDrive 8 app refused on iDrive 7 (and not on iDrive 8); an App Manager
   index (packages kept by sha256, one that does not match left out, a kept
