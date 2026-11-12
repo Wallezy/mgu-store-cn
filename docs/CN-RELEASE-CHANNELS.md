@@ -5,7 +5,7 @@ Stores, and selecting a channel does not change Root access.
 
 | Channel | Catalog root | Audience |
 | --- | --- | --- |
-| Stable (default) | `https://mgu.walle.pw/mgu/cn/` | Validated installations |
+| Stable (default) | `https://mgu.walle.pw/mgu/cn/` | Reviewed upstream updates and validated installations |
 | Beta (explicit opt-in) | `https://mgu.walle.pw/mgu/cn/beta/` | Owner development and vehicle trials |
 
 The updater persists `release_channel` in its private local configuration.
@@ -15,6 +15,21 @@ the channels. A Beta catalog cannot satisfy the Stable updater's trial.
 Neither channel falls back to GitHub.
 
 ## Build once, promote the tested bytes
+
+Owner release policy: reviewed upstream synchronization and its CN compatibility
+adaptations publish the same payloads to both Beta and Stable in one release
+operation. Vehicle/emulator results are recorded honestly and are not a gate
+for this route. A separately requested development trial publishes only Beta
+until the owner requests its wider release.
+
+The upstream route uses `release/promote_cn.py` with exact-candidate evidence:
+`method: reviewed-upstream`, passed `source_checks`, `upstream_review` and
+`reproducible_build`, the two pinned `upstream_commits`, and an actual private
+review report. Stable records `stable-upstream-reviewed`, pending runtime
+integration and `fully_vehicle_validated: false`. Both channels still require
+exact-commit CI, complete dependencies, immutable versioned packages and public
+download verification. Publish Beta first and then Stable from identical bytes;
+the two remote manifests cannot be committed atomically.
 
 1. Review upstream changes, dependencies, localization and recovery behavior.
    Build both repositories from fixed commits and pass their source/installer CI.
@@ -26,10 +41,10 @@ Neither channel falls back to GitHub.
    plan. `--publish` uploads only its chosen channel. Supply the private
    ossutil path/config, one shared maintainer work directory and the exact
    manifest digest via `--expect-snapshot`. This is a maintainer tool.
-4. Record owner vehicle results against that exact Beta manifest SHA-256.
+4. For a vehicle-validated release, record owner vehicle results against that exact Beta manifest SHA-256.
    The owner's explicitly chosen real-vehicle trial may replace an unavailable
    emulator. Offline fixtures remain a separate validation layer.
-5. `release/promote_cn.py` accepts the Beta directory, a private evidence file
+5. The vehicle-validated route of `release/promote_cn.py` accepts the Beta directory, a private evidence file
    and a new output directory. The evidence must identify the exact manifest,
    an actual report file, a validation method and passed checks for source
    tests, installation, migration, component update order, restart, settings,
@@ -101,8 +116,9 @@ and records the tested path from the initial snapshot.
 
 ## Maintenance automation
 
-Monitor upstream review, CN adaptation, CI, Beta publication, vehicle evidence,
-Stable promotion and public acceptance as separate stages. Official-package
+Monitor upstream review, CN adaptation, CI, channel publication, any requested
+vehicle trial and public acceptance as separate stages. Reviewed upstream
+updates use the owner's dual-channel policy above. Official-package
 mirrors use the existing maintenance scripts and cannot write either CN channel.
 Monitoring does not authorize merging unreviewed code, fabricating vehicle
-evidence, promoting Stable automatically or operating a car.
+evidence or operating a car.

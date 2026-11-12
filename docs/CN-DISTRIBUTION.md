@@ -1,12 +1,12 @@
 # MGU CN distribution / 国内发行版
 
-Status: **Beta owner trials and Stable promotion are separate; Stable acceptance is pending**.
-状态：**Beta 车主试验与 Stable 晋升分开管理，正式版验收待完成**。
+Status: **Reviewed upstream updates publish to Beta and Stable; runtime validation is recorded separately**.
+状态：**审阅后的上游同步更新同时发布到 Beta 和 Stable，车机验证状态单独记录**。
 
 The [migration candidate](CN-MIGRATION.md) provides complete-snapshot planning,
-supported ID7 replacements and transaction recovery. It does not establish the
-integration approval needed to enable a Stable release. See
-[release channels](CN-RELEASE-CHANNELS.md) for explicit Beta admission.
+supported ID7 replacements and transaction recovery. See
+[release channels](CN-RELEASE-CHANNELS.md) for the owner's reviewed-upstream
+dual-channel policy and separately requested Beta trials.
 
 This community distribution is based on `robertnisipeanu/mgu-store` and
 `robertnisipeanu/idrive-apps`. Original authorship and licenses remain intact.
@@ -42,6 +42,13 @@ GitHub 来源与账号功能停用，其他 HTTPS/本地来源不自动迁移。
 不作为国内版车机的在线下载入口。
 
 ## Release procedure
+
+Reviewed upstream synchronization uses the `reviewed-upstream` release route
+in [release channels](CN-RELEASE-CHANNELS.md). Source checks, pinned upstream
+review, reproducible builds and exact-commit CI allow publication to both
+channels without a vehicle-validation gate. Runtime integration remains
+pending in its public manifest. The integration tests below describe the
+vehicle-validated route and separately requested development trials.
 
 1. Pin the upstream base, review each changed component and stamp its numeric
    version in a scratch checkout. CN versions use the supported three-number

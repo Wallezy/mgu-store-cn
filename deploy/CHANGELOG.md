@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.19
+
+- CN deployment includes safe mode and deactivation before snapshot restoration or a firmware-change downgrade, with migration locks and complete HMI recovery packages.
+
 - The CN installer verifies a complete local distribution snapshot and stages a matching migration runner. Plans bind package hashes, the linked candidate, installed contents, firmware and source identities before any component replacement.
 - ID7 migration retains compatible identical packages, reinstalls ordinary same-version apps with their data and independent recovery packages, and limits same-version Waze tool changes to its log presentation. Same-version maintenance tools, unknown identities and downgrades are refused.
 - Persistent migration journals block competing deployment writes, keep a private recovery runner and support explicit status, post-restart content verification and rollback. Nested installs do not update the deploy tool outside its recorded step.
@@ -11,6 +15,15 @@
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+## 0.8.16
+
+- Safe mode: when 4 starts of the head unit in a row end in a restart that recmgr or crashhandler asked for within 2 minutes, our tools' units stay off at the next starts, BMW's start as usual. A switch-off or a normal restart (the HMI's or the Store's) after 2 minutes, a restart our tools ask for and a start that stays up 5 minutes start the count again; a start that leaves no shutdown mark (a power cut, or `var-opt-ro.service` not running the mark) counts nothing. The next install or update that goes through as a whole, or `safe-mode off --yes`, leaves it, and the tools start at the next start. A unit whose `component.json` entry says `"runsInSafeMode": true` (the updater's) runs in safe mode. `status --json` reports `safe_mode`. An install of an older deploy tool, or a rollback to one, that has no safe mode takes the guard out and leaves safe mode. deploy/README.md, "Safe mode".
+- A rollback that puts units, links or drop-ins back reloads systemd, so they take effect: a failed uninstall, restore, fallback switch or app manager takeover. The boot step that removes the deploy tool at the start after `remove-all` on iDrive 8 reloads systemd too.
+
+## 0.8.15
+
+- `restore` runs, before it puts anything back and with all of each version in place, the `deactivate` of each tool's current version the backup puts on another version, as a rollback does, and the hooks of the removal of each tool the backup shows absent, as a removal does (a restart one asks for is pending under the deploy tool). One that fails refuses the restore (exit 2, nothing restored), and the versions deactivated run their `activate` again, as they do when the restore fails after them, but for a tool it has removed by then. A tool the backup leaves on its version runs no hook.
+- An install of an older version after a firmware update runs the `deactivate` of the version it replaces, as any downgrade does: that version may have changed the new firmware's files through its own tool since. One that fails refuses the install (exit 2), and that version stays current, needing setup. An install of the same or a newer version from another source after a firmware update still records the version it replaces as deactivated without running it.
 - `mgu-install.js`: while finding the head unit, a download, or the install or removal on the head unit takes longer than 30 s, a line about every 30 s says it is still going, such as `the head unit is still installing (2 min)`. Ctrl+C (or SIGTERM) prints `stopped; run the same command again to finish` and exits as the signal would.
 - `mgu-install.js` `first-install`, `status`, `uninstall` and `token`: when the head unit was found (its hotspot address answers on port 22 without SSH, or the ENET gateway reports its address) but its SSH does not answer, they say `found the head unit at <address>, but its SSH is closed: enable root SSH first, then run this again`.
 - `mgu-install.js usb-repo` copies each app icon a catalog lists beside the stick's `catalog.json`, checked against its `iconSha256`, so the Store shows it from the stick. An icon that cannot be read or does not match is left out, said, and the stick is written all the same.

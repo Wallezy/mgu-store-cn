@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.41
+
+The CN Store displays safe mode and offers its exit action in the native and
+fallback interfaces. Managed CN sources and channel labels remain available.
+Requires CN deploy 0.8.19 and updater 0.8.43.
+
 ## 0.9.40
 
 CN application tiles omit the catalog hostname. Source lists and details show
@@ -15,6 +21,16 @@ An older updater without that information keeps the ordinary Settings title.
 - The CN distribution requires its migration-aware updater and deploy tool. Its candidate version is separate from the upstream Store while map application localization retains the app versions.
 
 - The CN updater's `github: false` capability hides GitHub accounts, token entry, sign-in and repository discovery in both UI modes. Source entry accepts HTTPS catalogs and the drawn keyboard offers `/catalog.json`. An updater without the capability retains its supported UI.
+## 0.9.39
+
+In the deploy tool's safe mode the status line says Safe mode, and Leave
+safe mode under it leaves it.
+
+## 0.9.38
+
+Settings shows every Access row at once: when they do not all fit at full
+height, each row shows its state on the same line as its name.
+
 ## 0.9.37
 
 Tilting the controller right or down moves the focus to the nearest item that way: across the app grid, from the side menu to the grid, to a row's button. With idrive7-apps' controller gate loaded, tilting up and left moves it too, and tilting left with nothing further left goes back a page.

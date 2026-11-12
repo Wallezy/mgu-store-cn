@@ -386,7 +386,7 @@ checking.checkSource('mgu-store').then(() => {
     test('active migration blocks queue and source/network mutations', () => {
         assert(/edition migration/.test(u.enqueue({ id: 'map', op: 'install' })));
         assert.strictEqual(u.queue.length, 0);
-        ['install', 'source-add', 'source-remove', 'proxy-set', 'wifi-connect', 'reboot'].forEach((op) =>
+        ['install', 'source-add', 'source-remove', 'proxy-set', 'wifi-connect', 'reboot', 'safe-mode-off'].forEach((op) =>
             assert(/edition migration/.test(u.handle({ op, id: 'map' }, () => {})), op));
         assert.strictEqual(u.handle({ op: 'status' }, () => {}), null);
         assert.strictEqual(u.next(), undefined);

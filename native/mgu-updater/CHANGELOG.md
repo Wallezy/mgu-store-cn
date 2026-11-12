@@ -2,11 +2,21 @@
 
 ## Unreleased
 
+## 0.8.43
+
+- CN state and Store requests support safe mode while preserving managed domestic channels and migration locks. Requires CN deploy 0.8.19.
+
 - An active edition migration pauses the update queue and refuses source and configuration changes. A normal restart remains available when the transaction awaits verification; queued work can resume once the migration is verified or restored.
 
 - The CN distribution reads its Store and map catalogs over HTTPS while preserving installed source identities. Known official and mirror definitions are normalized in memory; conflicting identities stop source changes instead of guessing.
 - CN catalogs use isolated, definition-bound caches, and an online updater trial requires its own complete CN catalog rather than an unrelated source response.
 - CN runtime disables GitHub sources and accounts without deleting their saved recovery data, and refuses GitHub download hosts through redirects as well.
+## 0.8.42
+
+- The deploy tool's safe mode shows in the state (`safeMode`), and the Store's Leave safe mode (`safe-mode-off`) leaves it. The updater runs in safe mode.
+- A tool installed from a repository's tree keeps its units' `runsInSafeMode`.
+- Before it asks for a restart of the head unit, the updater records it for the deploy tool, so the restart never counts against safe mode.
+
 ## 0.8.41
 
 - The phone page's Logs list the Renderer's journals (`mgu-render`, `mgu-render-hmi`) and the deploy tool's check after a restart (`mgu-deploy-verify`).

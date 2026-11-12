@@ -161,12 +161,16 @@ def publish(remote, source, work, execute):
     if manifest.get("release_channel", "stable") != remote.channel:
         raise ValueError("Explicit channel differs from snapshot")
     if remote.channel == "stable":
-        if (manifest.get("installReady") is not True or manifest.get("status") != "stable-validated"
+        vehicle_validated = (manifest.get("status") == "stable-validated"
+                             and manifest.get("validation", {}).get("method") in
+                             ("owner-vehicle", "head-unit-emulator-and-vehicle")
+                             and set(manifest.get("validation", {}).get("checks", [])) == set(C.CHECKS)
+                             and all(r.get("integration") == {"context": P.CONTEXT, "state": "success", "sha": r["commit"]}
+                                     for r in manifest["repositories"].values()))
+        if (manifest.get("installReady") is not True
                 or not P.SHA.fullmatch(manifest.get("promoted_from", ""))
-                or set(manifest.get("validation", {}).get("checks", [])) != set(C.CHECKS)
-                or any(r.get("integration") != {"context": P.CONTEXT, "state": "success", "sha": r["commit"]}
-                       for r in manifest["repositories"].values())):
-            raise ValueError("Stable publication requires an exact validated Beta promotion")
+                or not (vehicle_validated or C.reviewed_upstream(manifest))):
+            raise ValueError("Stable publication requires an exact vehicle-validated or reviewed-upstream promotion")
         rel = "candidates/" + manifest["promoted_from"] + "/cn-manifest.json"
         file = work / "beta-proof.json"
         if download(P.BASES["beta"] + rel, file) is None:
@@ -211,7 +215,8 @@ def publish(remote, source, work, execute):
     P.copy_file(source / "cn-manifest.json", work / "candidate" / candidate)
     result = {"channel": remote.channel, "status": "prepared", "manifest_sha256": digest,
               "ci": ci, "planned": [p["path"] for p in plan], "uploaded": [],
-              "public_verified": False, "vehicle_validated": remote.channel == "stable"}
+              "public_verified": False,
+              "vehicle_validated": remote.channel == "stable" and manifest.get("status") == "stable-validated"}
     if not execute:
         return result
     if current_sha == digest and not plan:

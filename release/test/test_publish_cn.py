@@ -151,6 +151,39 @@ class PublicationTests(F.PreparationTests):
             self.execute(remote, "stable")
         self.assertFalse(remote.writes)
 
+    def test_reviewed_upstream_publishes_stable_without_claiming_vehicle_tests(self):
+        self.beta()
+        beta_manifest = (self.output / "cn-manifest.json").read_bytes()
+        report = self.root / "review.txt"
+        report.write_text("Synthetic upstream review fixture; no vehicle tests.")
+        review = self.root / "review.json"
+        P.write_json(review, {
+            "schema": 1, "snapshot_sha256": P.digest(self.output / "cn-manifest.json"),
+            "state": "passed", "method": "reviewed-upstream", "report": str(report),
+            "checks": {c: "passed" for c in U.C.UPSTREAM_CHECKS},
+            "upstream_commits": {repo: "a" * 40 for repo in P.REPOS}})
+        target = self.root / "stable"
+        U.C.promote(self.output, review, target)
+        self.output = target
+        remote = FakeRemote()
+        remote.channel = "stable"
+
+        def download(url, file):
+            file.write_bytes(beta_manifest)
+            return {}
+
+        with mock.patch.object(U, "download", side_effect=download):
+            result = self.execute(remote, "stable-publish")
+        self.assertTrue(result["public_verified"])
+        self.assertFalse(result["vehicle_validated"])
+        manifest = P.read_json(target / "cn-manifest.json")
+        manifest["validation"]["fully_vehicle_validated"] = True
+        P.write_json(target / "cn-manifest.json", manifest)
+        writes = len(remote.writes)
+        with self.assertRaisesRegex(ValueError, "reviewed-upstream"):
+            self.execute(remote, "false-validation")
+        self.assertEqual(writes, len(remote.writes))
+
     def test_cli_diagnostics_are_confined_to_private_work_directory(self):
         work = self.root / "private-work"
         work.mkdir(mode=0o700)

@@ -50,6 +50,38 @@ class PromotionTests(PreparationTests):
             C.promote(self.output, path, self.root / "stable")
         self.assertFalse((self.root / "stable").exists())
 
+    def test_reviewed_upstream_keeps_runtime_validation_pending(self):
+        beta = self.beta()
+        path, record = self.evidence()
+        record.update(method="reviewed-upstream",
+                      checks={c: "passed" for c in C.UPSTREAM_CHECKS},
+                      upstream_commits={repo: "a" * 40 for repo in M.REPOS})
+        M.write_json(path, record)
+        target = self.root / "stable"
+        stable = C.promote(self.output, path, target)
+        self.assertTrue(C.reviewed_upstream(stable))
+        self.assertTrue(stable["installReady"])
+        self.assertFalse(stable["validation"]["fully_vehicle_validated"])
+        self.assertTrue(all(r["integration"]["state"] == "pending" for r in stable["repositories"].values()))
+        for f in beta["files"]:
+            if not f["path"].endswith("/catalog.json"):
+                self.assertEqual(M.digest(target / f["path"]), f["sha256"])
+
+    def test_upstream_release_requires_review_and_pinned_sources(self):
+        self.beta()
+        path, record = self.evidence()
+        record.update(method="reviewed-upstream", checks={c: "passed" for c in C.UPSTREAM_CHECKS},
+                      upstream_commits={repo: "a" * 40 for repo in M.REPOS})
+        record["checks"]["upstream_review"] = "pending"
+        M.write_json(path, record)
+        with self.assertRaisesRegex(ValueError, "exact Beta"):
+            C.promote(self.output, path, self.root / "stable")
+        record["checks"]["upstream_review"] = "passed"
+        record["upstream_commits"]["mgu-store"] = "main"
+        M.write_json(path, record)
+        with self.assertRaisesRegex(ValueError, "exact Beta"):
+            C.promote(self.output, path, self.root / "stable")
+
     def test_another_candidate_cannot_reuse_vehicle_evidence(self):
         self.beta()
         path, record = self.evidence()

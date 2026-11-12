@@ -13,6 +13,23 @@ import prepare_cn as P
 
 CHECKS = ("source_checks", "installation", "migration", "component_update_order",
           "restart", "settings", "update_channel", "self_update", "rollback")
+UPSTREAM_CHECKS = ("source_checks", "upstream_review", "reproducible_build")
+
+
+def upstream_commits(value):
+    return (isinstance(value, dict) and set(value) == set(P.REPOS)
+            and all(isinstance(sha, str) and P.COMMIT.fullmatch(sha) for sha in value.values()))
+
+
+def reviewed_upstream(manifest):
+    validation = manifest.get("validation", {})
+    return (manifest.get("status") == "stable-upstream-reviewed"
+            and validation.get("method") == "reviewed-upstream"
+            and set(validation.get("checks", [])) == set(UPSTREAM_CHECKS)
+            and validation.get("fully_vehicle_validated") is False
+            and upstream_commits(validation.get("upstream_commits"))
+            and all(r.get("integration") == {"context": P.CONTEXT, "state": "pending", "sha": r["commit"]}
+                    for r in manifest["repositories"].values()))
 
 
 def snapshot(root):
@@ -87,10 +104,13 @@ def promote(beta, evidence, output):
         raise ValueError("Promotion requires a Beta snapshot")
     review = P.read_json(evidence)
     beta_sha = P.digest(beta / "cn-manifest.json")
+    upstream = review.get("method") == "reviewed-upstream"
+    checks = UPSTREAM_CHECKS if upstream else CHECKS
     if (review.get("schema") != 1 or review.get("snapshot_sha256") != beta_sha
             or review.get("state") != "passed"
-            or review.get("method") not in ("owner-vehicle", "head-unit-emulator-and-vehicle")
-            or any(review.get("checks", {}).get(c) != "passed" for c in CHECKS)):
+            or review.get("method") not in ("owner-vehicle", "head-unit-emulator-and-vehicle", "reviewed-upstream")
+            or any(review.get("checks", {}).get(c) != "passed" for c in checks)
+            or (upstream and not upstream_commits(review.get("upstream_commits")))):
         raise ValueError("Promotion requires passed validation of this exact Beta snapshot")
     report = review.get("report")
     if not isinstance(report, str) or not report.strip() or not pathlib.Path(report).is_file():
@@ -104,9 +124,12 @@ def promote(beta, evidence, output):
             P.copy_file(P.regular(beta, entry["path"]), stage / entry["path"])
         promoted = copy.deepcopy(manifest)
         promoted.update(release_channel="stable", base_url=P.BASES["stable"],
-                        status="stable-validated", installReady=True,
+                        status="stable-upstream-reviewed" if upstream else "stable-validated", installReady=True,
                         promoted_from=beta_sha,
-                        validation={"method": review["method"], "checks": list(CHECKS)})
+                        validation={"method": review["method"], "checks": list(checks)})
+        if upstream:
+            promoted["validation"].update(upstream_commits=review["upstream_commits"],
+                                          fully_vehicle_validated=False)
         for repo in P.REPOS:
             file = stage / repo / "catalog.json"
             catalog = P.read_json(file)
@@ -114,7 +137,8 @@ def promote(beta, evidence, output):
             P.write_json(file, catalog)
             record = promoted["repositories"][repo]
             record["catalog_url"] = P.BASES["stable"] + repo + "/catalog.json"
-            record["integration"] = {"context": P.CONTEXT, "state": "success", "sha": record["commit"]}
+            record["integration"] = {"context": P.CONTEXT, "state": "pending" if upstream else "success",
+                                     "sha": record["commit"]}
         for entry in promoted["files"]:
             file = stage / entry["path"]
             if entry["path"].endswith("/catalog.json"):
