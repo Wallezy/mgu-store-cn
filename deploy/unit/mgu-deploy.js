@@ -7313,6 +7313,12 @@ function editionOldPackage(a, stage) {
     if (!tool) return null;
     old = keptToolArtifact(tool);
     if (!old || !editionMatches(old)) throw refuse(a.id + ': the installed tool differs from its kept recovery payload');
+    var declared = tool.component.files.map(function (f) { return f.path; }).concat('component.json');
+    var extra = walk(path.join(tool.root, 'current'), '', []).filter(function (e) {
+        return e.stat.isFile() && declared.indexOf(e.rel) < 0 &&
+            !/^py\/__pycache__\/[A-Za-z0-9_.-]+\.pyc$/.test(e.rel);
+    });
+    if (extra.length) throw refuse(a.id + ': undeclared installed files need an explicit recovery mapping');
     var entries = walk(old.dir, '', []).filter(function (e) { return e.stat.isFile(); }).map(function (e) {
         return { name: e.rel, data: fs.readFileSync(e.path), mode: e.stat.mode & 0o7777 };
     });

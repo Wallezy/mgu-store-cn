@@ -4158,6 +4158,9 @@ class Updater {
 
     /* Queues what the version before left queued (handover). */
     takeQueue() {
+        if (this.editionMigration()) {
+            return;
+        }
         const file = path.join(this.conf.state_dir, 'queue.json');
         let items = [];
         try {
@@ -4390,6 +4393,9 @@ class Updater {
                 this.scanUsb();
                 this.scanTokens();
                 this.watchPlaced();
+                if (!this.editionMigration() && fs.existsSync(path.join(this.conf.state_dir, 'queue.json'))) {
+                    this.takeQueue();
+                }
                 if (this.queue.length && !this.busy && !this.editionMigration()) {
                     this.next();
                 }

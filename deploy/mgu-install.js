@@ -992,6 +992,39 @@ function migrationRelease(snapshot, installed) {
             id: entry.id, version: entry.version, sha256: entry.artifact.sha256, requires: entry.requires || {}
         })) } };
 }
+async function migrationRuntime(o) {
+    const code = '/* mgu-edition-runtime */' +
+        'var net=require(`net`),s=net.connect(`/dev/shm/mgu-updater/updater.sock`),b=``,done=false;' +
+        'var t=setTimeout(function(){s.destroy();process.exitCode=1;},15000);' +
+        's.on(`data`,function(d){b+=d;if(b.length>8388608){s.destroy();process.exitCode=1;return;}' +
+        'var n=b.indexOf(String.fromCharCode(10));if(n<0||done)return;var v;try{v=JSON.parse(b.slice(0,n));}catch(e){s.destroy();process.exitCode=1;return;}' +
+        'done=true;clearTimeout(t);console.log(JSON.stringify({updater:v.updater,github:v.github,distribution:v.distribution,' +
+        'busy:v.busy,components:(v.components||[]).map(function(c){return {id:c.id,installAs:c.installAs,installed:c.installed,source:c.source,queued:c.queued};}),' +
+        'sources:(v.sources||[]).map(function(c){return {id:c.id,type:c.type,label:c.label,status:c.status,error:c.error};})}));s.end();});' +
+        's.on(`error`,function(){clearTimeout(t);process.exitCode=1;});';
+    const result = await ssh(o, `/usr/bin/node -e ${shQuote(code)}`, { input: Buffer.alloc(0), capture: true });
+    const state = result.status === 0 ? lastJson(result.stdout) : null;
+    if (!state || !state.updater || !Array.isArray(state.components)) {
+        throw new Usage('the running updater could not provide a read-only migration inventory');
+    }
+    return state;
+}
+function migrationRuntimeCheck(state, journal) {
+    if (state.busy || state.components.some((c) => c.queued)) return 'the updater has running or queued work';
+    if (!journal) return null;
+    if (state.distribution !== 'walle-cn' || state.github !== false) return 'the running updater is not the CN distribution';
+    for (const step of journal.steps) {
+        const rows = state.components.filter((c) => (c.installAs || c.id) === step.id && c.installed);
+        if (rows.length !== 1 || rows[0].installed !== step.version) {
+            return `${step.id}: the updater does not show one matching installed component`;
+        }
+        const group = ['robertn_waze_cluster', 'waze-on-cluster', 'cluster-render'].includes(step.id) ? 'idrive-apps' : 'mgu-store';
+        const source = state.sources.find((s) => s.id === rows[0].source);
+        if (!source || source.type !== 'https' || source.label !== `${CN_BASE}${group}/catalog.json` ||
+            source.status !== 'ok' || source.error) return `${step.id}: its managed CN update catalog is not ready`;
+    }
+    return null;
+}
 async function migrateCn(o) {
     if (!o.from || !!o.planOnly === !!o.expectPlan) {
         throw new Usage('migrate-cn needs --from and exactly one of --plan-only or --expect-plan');
@@ -1006,6 +1039,9 @@ async function migrateCn(o) {
         throw new Usage('this snapshot is for preparation only; migration integration/publication evidence is missing');
     }
     await reach(o);
+    const runtime = await migrationRuntime(o);
+    const busy = migrationRuntimeCheck(runtime);
+    if (busy) throw new Usage(busy);
     // A staged copy supplies a known read-only status implementation even when
     // the installed wrapper predates --read-only; it is not installed here.
     const stage = `/var/opt/mgu-deploy-kit-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
@@ -1041,6 +1077,14 @@ async function migrationCommand(o) {
     const runner = `/var/opt/mgu-deploy/edition-migrations/${o.transaction}/runner/mgu-deploy.sh`;
     const verb = { 'migration-status': 'edition-status', 'migration-verify': 'edition-verify',
         'migration-rollback': 'edition-rollback' }[o.command];
+    if (o.command === 'migration-verify') {
+        const saved = await ssh(o, `sh ${shQuote(runner)} edition-status ${o.transaction}`,
+            { input: Buffer.alloc(0), capture: true });
+        const journal = saved.status === 0 ? lastJson(saved.stdout) : null;
+        if (!journal || !Array.isArray(journal.steps)) throw new Usage('migration journal is unavailable');
+        const refusal = migrationRuntimeCheck(await migrationRuntime(o), journal);
+        if (refusal) throw new Usage(refusal);
+    }
     return (await ssh(o, `sh ${shQuote(runner)} ${verb} ${o.transaction}${o.yes ? ' --yes' : ''}`,
         { input: Buffer.alloc(0), wait: 'the head unit is checking or restoring the migration' })).status;
 }
@@ -1734,6 +1778,6 @@ if (require.main === module || FROM_STDIN) {
 }
 
 module.exports = { tgz, untgz, sshArgs, folderName, plainName, parse, SOURCES, updaterPackageIdentity, updaterCompatibility,
-    migrationSnapshot, migrationRelease, SETUP_INSTALLED,
+    migrationSnapshot, migrationRelease, migrationRuntimeCheck, SETUP_INSTALLED,
     sshBanner, enetInterfaces, hsfzFrame, hsfzFrames,
     didAddress, hsfzGateway, hsfzHuAddress, findUnit, reach, tilesShow, STATUS_HAS };

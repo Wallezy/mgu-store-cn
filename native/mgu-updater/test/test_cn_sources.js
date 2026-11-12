@@ -351,7 +351,7 @@ checking.checkSource('mgu-store').then(() => {
     fs.writeFileSync(path.join(dir, 'active.json'), JSON.stringify({ id }));
     fs.writeFileSync(path.join(dir, id, 'journal.json'), JSON.stringify({ phase: 'applying' }));
     const u = Object.assign(Object.create(Updater.prototype), {
-        conf: { tool_root: root, distribution_channel: cn.CHANNEL }, authorized: () => true,
+        conf: { tool_root: root, state_dir: root, distribution_channel: cn.CHANNEL }, authorized: () => true,
         queue: [], conflict: () => { throw new Error('should refuse before queue changes'); },
         next: Updater.prototype.next
     });
@@ -362,6 +362,10 @@ checking.checkSource('mgu-store').then(() => {
             assert(/edition migration/.test(u.handle({ op, id: 'map' }, () => {})), op));
         assert.strictEqual(u.handle({ op: 'status' }, () => {}), null);
         assert.strictEqual(u.next(), undefined);
+        fs.writeFileSync(path.join(root, 'queue.json'), JSON.stringify([{ id: 'map', op: 'install' }]));
+        u.takeQueue();
+        assert(fs.existsSync(path.join(root, 'queue.json')));
+        assert.strictEqual(u.queue.length, 0);
     });
     test('normal restart is available while migration awaits verification', () => {
         fs.writeFileSync(path.join(dir, id, 'journal.json'), JSON.stringify({ phase: 'awaiting-verification' }));
@@ -375,6 +379,10 @@ checking.checkSource('mgu-store').then(() => {
         assert(/recovery-needed/.test(u.enqueue({ id: 'map' })));
         fs.unlinkSync(path.join(dir, 'active.json'));
         assert.strictEqual(u.editionMigration(), null);
+        u.enqueue = (item) => u.queue.push(item);
+        u.takeQueue();
+        assert.strictEqual(u.queue[0].id, 'map');
+        assert(!fs.existsSync(path.join(root, 'queue.json')));
     });
     fs.unlinkSync(path.join(dir, id, 'journal.json'));
     fs.rmdirSync(path.join(dir, id));

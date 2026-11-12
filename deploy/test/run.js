@@ -9885,6 +9885,12 @@ function testEditionToolMigration() {
     p = up.run(['edition-plan'].concat(options('mgu-updater', after)));
     check('edition tool: equal-version updater replacement is refused without touching it', p.status === 2 &&
         p.out.includes('maintenance/binary replacement') && up.hash().hash === hashBefore.hash, p.out);
+    const extra = root.p('var/opt/waze-on-cluster/current/custom-settings.json');
+    write(extra, '{"user":true}');
+    p = root.run(['edition-plan'].concat(args));
+    check('edition tool: undeclared payload data is preserved and blocks replacement', p.status === 2 &&
+        p.out.includes('undeclared installed files') && fs.readFileSync(extra, 'utf8') === '{"user":true}', p.out);
+    fs.unlinkSync(extra);
     write(root.p('var/opt/mgu-updater/sources.json'), JSON.stringify({ schema: 1, sources: [
         { id: 'idrive-apps', type: 'https', url: 'https://example.invalid/custom/catalog.json' }
     ] }));

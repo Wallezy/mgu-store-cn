@@ -88,6 +88,7 @@ if (c === '-V') { console.log('OpenSSH_9.0'); process.exit(0); }
 fs.appendFileSync(process.env.EDITION_SSH_LOG, c + '\\n');
 fs.readFileSync(0);
 if (c.includes('status --read-only --json')) console.log(JSON.stringify({components:[{id:'robertn_waze_cluster',version:'1.2.3'}]}));
+else if (c.includes('mgu-edition-runtime')) console.log(JSON.stringify({updater:{version:'1.0.0'},busy:null,components:[],sources:[]}));
 else if (c.includes('edition-plan')) console.log(JSON.stringify({id:'a'.repeat(64),ready:false,plan:{blocked:[{id:'mgu-updater'}]}}));
 else if (!c.includes('tar -xzf') && !c.startsWith('rm -rf')) process.exit(99);
 `);
@@ -114,4 +115,20 @@ manifest.files[0].path = '../escape';
 writeManifest();
 assert.throws(() => installer.migrationSnapshot(root), /unsafe/);
 console.log('ok - corrupt packages, duplicate inventory and path traversal are refused');
+const runtime = { distribution: 'walle-cn', github: false, busy: null,
+    components: [{ id: 'robertn_waze_cluster', installed: '1.2.3', source: 'maps' }],
+    sources: [{ id: 'maps', type: 'https', label: 'https://mgu.walle.pw/mgu/cn/idrive-apps/catalog.json', status: 'ok' }] };
+const journal = { steps: [{ id: 'robertn_waze_cluster', version: '1.2.3' }] };
+assert.strictEqual(installer.migrationRuntimeCheck(runtime, journal), null);
+runtime.github = true;
+assert(/not the CN/.test(installer.migrationRuntimeCheck(runtime, journal)));
+runtime.github = false;
+runtime.components.push(Object.assign({}, runtime.components[0]));
+assert(/one matching/.test(installer.migrationRuntimeCheck(runtime, journal)));
+runtime.components.pop();
+runtime.sources[0].label = 'https://github.com/owner/repo';
+assert(/catalog/.test(installer.migrationRuntimeCheck(runtime, journal)));
+runtime.busy = { id: 'mgu-updater', phase: 'install' };
+assert(/queued work/.test(installer.migrationRuntimeCheck(runtime)));
+console.log('ok - runtime acceptance requires idle updater, CN channel, unique rows and domestic catalogs');
 fs.rmSync(tmp, { recursive: true, force: true });
