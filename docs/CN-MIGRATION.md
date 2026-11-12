@@ -21,8 +21,13 @@ The current executor supports migration **to Walle CN on ID7**:
   its candidate has compiled and its actual installed package is backed up.
 - A same-version `waze-on-cluster` change is limited to `logs.js`; its binary,
   lifecycle declarations and other files must match. Patch hooks do not run.
+- Third-party apps and tools outside the managed component set retain their
+  payloads, settings and origin records. Their payload fingerprints bind the
+  plan and verification; their declared dependencies must remain satisfied.
+  GitHub-only sources are unavailable in CN, so these retained components are
+  not reported as migrated or able to update from the CN catalogs.
 - Same-version Store/updater/deploy changes, lower versions, ID8, conflicting
-  origins and unmapped installed components are refused before replacement.
+  origins and missing managed components are refused before replacement.
 
 This is not a generic force-install option. Returning to arbitrary official
 versions or another fork is not implemented. `migration-rollback` restores the
@@ -100,5 +105,5 @@ label, successful CI and reachable OSS files alone cannot establish this.
 
 Map components retain `robertn_waze_cluster 0.6.7`, `waze-on-cluster 0.9.10`
 and `cluster-render 0.5.4`. The management candidate uses Store `0.9.38`,
-updater `0.8.42` and deploy `0.8.15`, including the reviewed upstream changes
+updater `0.8.42` and deploy `0.8.16`, including the reviewed upstream changes
 through `e883efb`. These are candidate versions, not a published installation.

@@ -96,6 +96,10 @@ else if (!c.includes('tar -xzf') && !c.startsWith('rm -rf')) process.exit(99);
 const planned = run(['--plan-only'], { PATH: `${bin}:${process.env.PATH}`, EDITION_SSH_LOG: log });
 assert.strictEqual(planned.status, 0, planned.stdout + planned.stderr);
 const commands = fs.readFileSync(log, 'utf8');
+for (const command of commands.trim().split('\n')) {
+    const syntax = cp.spawnSync('sh', ['-n'], { input: command, encoding: 'utf8' });
+    assert.strictEqual(syntax.status, 0, syntax.stderr + '\n' + command);
+}
 assert(commands.includes('status --read-only --json'));
 assert(commands.includes('edition-plan --distribution-manifest'));
 assert(!commands.includes('edition-migrate'));

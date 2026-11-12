@@ -9785,6 +9785,42 @@ function testEditionMigration() {
     r = root.run(['edition-rollback', j.id, '--yes']);
     check('edition: repeated rollback is a no-op', r.status === 0 && !r.out.includes('uninstalling'), r.out);
 
+    const mixed = donorRoot();
+    mixed.run(['install', '--artifact', old, '--yes']);
+    mixed.run(['install', '--artifact', toolArtifact('0.1.0'), '--yes']);
+    mixed.run(['install', '--artifact', sourceArtifact('1.0.0', { id: 'third_party' },
+        { 'label.txt': 'retain me' }), '--yes']);
+    const preservedTool = mixed.p('var/opt/fixture-tool/current/lib/helper.js');
+    const originalTool = fs.readFileSync(preservedTool);
+    const mixedPlan = jsonLast(plan(mixed));
+    check('edition: third-party tools and apps are explicitly preserved',
+        mixedPlan.ready && mixedPlan.plan.preserved.length === 2 &&
+        mixedPlan.plan.preserved.every((c) => c.action === 'preserve' && c.before.content));
+    fs.appendFileSync(preservedTool, '\n// external change\n');
+    r = mixed.run(['edition-migrate', '--expect-plan', mixedPlan.id, '--yes'].concat(options));
+    check('edition: changed preserved payload invalidates the inspected plan',
+        r.status === 2 && r.out.includes('plan changed'), r.out);
+    fs.writeFileSync(preservedTool, originalTool);
+    r = mixed.run(['edition-migrate', '--expect-plan', mixedPlan.id, '--yes'].concat(options));
+    check('edition: migration leaves third-party payload and version untouched',
+        r.status === 0 && fs.readFileSync(preservedTool).equals(originalTool) &&
+        mixed.status().components.some((c) => c.id === 'third_party' && c.version === '1.0.0'), r.out);
+    fs.appendFileSync(preservedTool, '\n// external change\n');
+    r = mixed.run(['edition-verify', mixedPlan.id]);
+    check('edition: verification detects changes to preserved components',
+        r.status === 2 && r.out.includes('preserved component changed'), r.out);
+    fs.writeFileSync(preservedTool, originalTool);
+    r = mixed.run(['edition-rollback', mixedPlan.id, '--yes']);
+    check('edition: rollback retains third-party payloads',
+        r.status === 0 && fs.readFileSync(preservedTool).equals(originalTool), r.out);
+    const extraManifest = mixed.p('var/opt/fixture-tool/current/component.json');
+    const extraMetadata = readJson(extraManifest);
+    extraMetadata.requires = { 'mgu-deploy': '99.0.0' };
+    write(extraManifest, JSON.stringify(extraMetadata));
+    r = plan(mixed);
+    check('edition: preserved components with unsatisfied dependencies block migration',
+        r.status === 2 && r.out.includes('preserved component dependency'), r.out);
+
     root = donorRoot();
     root.run(['install', '--artifact', old, '--yes']);
     write(settings(root), '{"volume":7}');

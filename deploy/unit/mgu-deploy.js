@@ -55,7 +55,7 @@ var os = require('os');
 process.umask(0o022);
 
 /* deploy/component.json's version; the release sets both. */
-var VERSION = '0.8.15';
+var VERSION = '0.8.16';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -7285,6 +7285,13 @@ function editionCurrent(id) {
     if (lstatOrNull(path.join(CFG.varOpt, id, 'current'))) throw refuse('unreadable installed tool: ' + id);
     return null;
 }
+function editionPreservedCheck(plan) {
+    (plan.preserved || []).forEach(function (item) {
+        if (JSON.stringify(editionCurrent(item.id)) !== JSON.stringify(item.before)) {
+            throw refuse(item.id + ': preserved component changed since the migration plan');
+        }
+    });
+}
 function editionContent(file, rel) {
     var data = fs.readFileSync(file);
     if (rel === 'javascript/build.json') {
@@ -7495,8 +7502,22 @@ function editionPrepare(args, stage) {
             before: before, action: problem ? 'blocked' : action,
             recovery: backup ? sha256File(backup) : null });
     });
+    var preserved = [];
     var unmapped = installedTools().concat(installedApps().filter(function (a) { return a.pkg.mguLocalOnly === true; }))
-        .filter(function (a) { return !seen[a.id]; }).map(function (a) { return { id: a.id, version: a.version }; });
+        .filter(function (a) { return !seen[a.id]; }).map(function (a) {
+            if (EDITION_IDS.indexOf(a.id) >= 0) return { id: a.id, version: a.version };
+            var needs = (a.component || a.pkg).requires || {};
+            Object.keys(needs).forEach(function (id) {
+                var version = declared[id] ? declared[id].version : (editionCurrent(id) || {}).version;
+                if (!semverParts(needs[id]) || !version || semverCmp(version, needs[id]) < 0) {
+                    blocked.push({ id: a.id, reason: 'preserved component dependency is not satisfied: ' + id });
+                }
+            });
+            preserved.push({ id: a.id, before: editionCurrent(a.id), origin: ownership.origins[a.id] || null,
+                action: 'preserve', updateChannel: 'unchanged; GitHub sources unavailable in CN' });
+            return null;
+        }).filter(Boolean);
+    preserved.sort(function (a, b) { return a.id < b.id ? -1 : 1; });
     unmapped.forEach(function (item) {
         blocked.push({ id: item.id, reason: 'installed component has no target mapping in this migration' });
     });
@@ -7505,7 +7526,7 @@ function editionPrepare(args, stage) {
         channelConfig: { before: channelConfig.before, after: channelConfig.after, changed: channelConfig.changed },
         sources: editionSources(), owners: ownership.owners,
         steps: steps.sort(function (a, b) { return a.id < b.id ? -1 : 1; }),
-        unmapped: unmapped, blocked: blocked };
+        preserved: preserved, unmapped: unmapped, blocked: blocked };
     return { plan: plan, id: sha256Buf(Buffer.from(JSON.stringify(plan))), artifacts: artifacts, channelConfig: channelConfig };
 }
 function editionStage() {
@@ -7585,6 +7606,7 @@ function editionRestore(journal, stage) {
     });
     journal.phase = 'restoring'; editionWrite(journal);
     var failed = [];
+    try { editionPreservedCheck(journal.plan); } catch (e) { failed.push(e.message); }
     if (sourceChanged) failed.push('source/origin state changed outside the recorded transaction; preserved for inspection');
     journal.steps.slice().reverse().forEach(function (step) {
         if (['changing', 'applied', 'restoring', 'restore-failed'].indexOf(step.phase) < 0) return;
@@ -7687,6 +7709,7 @@ function cmdEditionMigrate(args) {
                 step.after = editionCurrent(step.id);
                 step.phase = 'applied'; editionWrite(journal);
             });
+            editionPreservedCheck(journal.plan);
             journal.phase = 'awaiting-verification';
             journal.sourcesAfter = editionSources();
             if (prepared.channelConfig.changed) {
@@ -7747,6 +7770,7 @@ function cmdEditionVerify(args) {
         if (config && editionSources()['updater.local.conf'] !== config.after) {
             throw refuse('CN release channel configuration changed since migration');
         }
+        editionPreservedCheck(journal.plan);
         journal.steps.forEach(function (step) {
             var a = validateArtifact(editionSaved(journal, step, 'after'), stage);
             if (!editionMatches(a)) throw refuse(step.id + ': active payload differs from the migration');

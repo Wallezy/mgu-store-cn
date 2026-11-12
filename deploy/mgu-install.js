@@ -1072,7 +1072,7 @@ async function migrateCn(o) {
     const q = shQuote(stage), staged = snapshot.runner;
     let status;
     try {
-        const upload = await ssh(o, unpackKit(q), { input: tgz(staged, 0) });
+        const upload = await ssh(o, unpackKit(q) + ':', { input: tgz(staged, 0) });
         if (upload.status) return 1;
         status = await ssh(o, `sh ${q}/mgu-deploy.sh status --read-only --json`, { input: Buffer.alloc(0), capture: true });
         const installed = status.status === 0 ? lastJson(status.stdout) : null;
