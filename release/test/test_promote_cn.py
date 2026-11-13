@@ -7,10 +7,61 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 import promote_cn as C
-from test_prepare_cn import PreparationTests, M
+from test_prepare_cn import PreparationTests, M, write_tar
+
+
+def component_fixture(case):
+    def prepare(output):
+        M.prepare(case.dirs["mgu-store"], case.dirs["idrive-apps"],
+                  case.sources["mgu-store"], case.sources["idrive-apps"],
+                  case.bootstrap, case.validation, output, channel="beta")
+    initial = case.root / "initial-beta"
+    prepare(initial)
+    report = case.root / "owner-component-report.txt"
+    report.write_text("Synthetic component retention review.")
+    review = case.root / "component-review.json"
+    record = {"schema": 1, "snapshot_sha256": M.digest(initial / "cn-manifest.json"),
+              "state": "passed", "method": "owner-reviewed", "owner_authorized": True,
+              "report": str(report), "checks": {c: "passed" for c in C.OWNER_CHECKS}}
+    M.write_json(review, record)
+    base = case.root / "component-stable-base"
+    C.promote(initial, review, base)
+    case.add_component("idrive-apps", "ambient_config", "app")
+    case.write_evidence()
+    candidate = case.root / "component-stable-candidate"
+    prepare(candidate)
+    component = next(c for c in case.catalogs["idrive-apps"]["components"] if c["id"] == "cluster-render")
+    package = case.dirs["idrive-apps"] / "cluster-render@1.0.1.tgz"
+    write_tar(package, {"component.json": b'{"id":"cluster-render","version":"1.0.1"}', "trial.txt": b"Beta only"})
+    component.update(version="1.0.1", artifact={"name": package.name, "url": package.name,
+                     "size": package.stat().st_size, "sha256": M.digest(package)})
+    case.write_evidence()
+    beta = case.root / "component-beta"
+    prepare(beta)
+    record.update(snapshot_sha256=M.digest(beta / "cn-manifest.json"),
+                  retained_components={"idrive-apps": ["cluster-render"]},
+                  retained_from=M.digest(base / "cn-manifest.json"),
+                  stable_candidate_sha256=M.digest(candidate / "cn-manifest.json"))
+    M.write_json(review, record)
+    return beta, candidate, base, review, record
 
 
 class PromotionTests(PreparationTests):
+    def test_shared_new_app_preserves_only_selected_stable_components(self):
+        beta, candidate, base, review, record = component_fixture(self)
+        target = self.root / "component-stable"
+        promoted = C.promote(beta, review, target, base, candidate)
+        self.assertTrue(C.owner_reviewed(promoted))
+        entries = {c["id"]: c for c in M.read_json(target / "idrive-apps/catalog.json")["components"]}
+        self.assertEqual(entries["cluster-render"]["version"], "1.0.0")
+        self.assertIn("ambient_config", entries)
+        record["stable_candidate_sha256"] = "f" * 64
+        M.write_json(review, record)
+        with self.assertRaisesRegex(ValueError, "candidate differs"):
+            C.promote(beta, review, self.root / "wrong-candidate", base, candidate)
+        with self.assertRaisesRegex(ValueError, "differs from its reviewed channel"):
+            C.compare_component_retention(beta, beta, base, {"idrive-apps": ["cluster-render"]})
+
     def beta(self):
         return M.prepare(self.dirs["mgu-store"], self.dirs["idrive-apps"],
                          self.sources["mgu-store"], self.sources["idrive-apps"],

@@ -136,3 +136,13 @@ retain the other repository from an exact current Stable snapshot using
 Beta candidate and every retained catalog and payload against current Stable.
 A changed Stable baseline stops publication. This does not promote a Beta-only
 trial or replace its packages.
+
+For a shared app added to a repository that also contains a Beta trial, prepare
+two source candidates and use `--stable-candidate` with `retained_components`
+in the review (repository names mapped to component ID lists). The review binds
+both candidate hashes and the current Stable hash. Each selected component must
+match current Stable exactly; every other component must match public Beta,
+including its artifact, icon, dependencies and release notes. Each candidate
+keeps its own source commit and must pass that commit's CI. Bootstrap and
+unselected repositories remain identical. This allows the same new app on both
+channels without moving a trial into Stable.

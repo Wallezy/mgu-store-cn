@@ -36,6 +36,7 @@ def reviewed_upstream(manifest):
 def owner_reviewed(manifest):
     v = manifest.get("validation", {})
     kept = v.get("retained_repositories", [])
+    components = v.get("retained_components", {})
     return (manifest.get("status") == "stable-owner-reviewed"
             and v.get("method") == "owner-reviewed"
             and set(v.get("checks", [])) == set(OWNER_CHECKS)
@@ -43,9 +44,34 @@ def owner_reviewed(manifest):
             and v.get("owner_authorized") is True
             and isinstance(kept, list) and len(set(kept)) == len(kept)
             and set(kept) < set(P.REPOS)
-            and (not kept or P.SHA.fullmatch(v.get("retained_from", "")))
+            and retained_components_valid(components)
+            and not set(components).intersection(kept)
+            and (not (kept or components) or P.SHA.fullmatch(v.get("retained_from", "")))
             and all(r.get("integration") == {"context": P.CONTEXT, "state": "pending", "sha": r["commit"]}
                     for r in manifest["repositories"].values()))
+
+
+def retained_components_valid(value):
+    return (isinstance(value, dict) and set(value) <= set(P.REPOS)
+            and all(isinstance(ids, list) and ids and len(ids) == len(set(ids))
+                    and all(isinstance(identity, str) and P.IDENTITY.fullmatch(identity) for identity in ids)
+                    for ids in value.values()))
+
+
+def compare_component_retention(beta, candidate, base, retained):
+    """New/shared entries match Beta exactly; selected trial entries remain exact Stable bytes."""
+    for repo, identities in retained.items():
+        def entries(root):
+            return {c["id"]: c for c in P.read_json(pathlib.Path(root) / repo / "catalog.json")["components"]}
+        a, b, old = entries(beta), entries(candidate), entries(base)
+        if set(a) != set(b) or not set(identities) < set(b) or not set(identities) <= set(old):
+            raise ValueError("Retained component set must exist beside shared Beta components")
+        for identity, component in b.items():
+            expected = old[identity] if identity in identities else a[identity]
+            if component != expected:
+                raise ValueError("Component differs from its reviewed channel: " + identity)
+        if P.digest(pathlib.Path(beta) / repo / "LICENSE") != P.digest(pathlib.Path(candidate) / repo / "LICENSE"):
+            raise ValueError("Component retention cannot change repository licensing")
 
 
 def payloads(manifest, repositories=None):
@@ -119,7 +145,7 @@ def snapshot(root):
     return manifest
 
 
-def promote(beta, evidence, output, stable_base=None):
+def promote(beta, evidence, output, stable_base=None, stable_candidate=None):
     beta, evidence, output = pathlib.Path(beta).resolve(), pathlib.Path(evidence), pathlib.Path(output).absolute()
     manifest = snapshot(beta)
     if manifest.get("release_channel") != "beta":
@@ -139,14 +165,36 @@ def promote(beta, evidence, output, stable_base=None):
     retained = review.get("retained_repositories", [])
     if not isinstance(retained, list) or len(set(retained)) != len(retained) or not set(retained) < set(P.REPOS):
         raise ValueError("Retain only a proper subset of repositories")
+    components = review.get("retained_components", {})
+    if not retained_components_valid(components) or set(components).intersection(retained):
+        raise ValueError("Invalid retained component selection")
     base = None
-    if retained:
+    if retained or components:
         if not owner or stable_base is None:
             raise ValueError("Retaining Stable requires explicit owner review and its exact snapshot")
         stable_base = pathlib.Path(stable_base).resolve()
         base = snapshot(stable_base)
         if base.get("release_channel") != "stable" or review.get("retained_from") != P.digest(stable_base / "cn-manifest.json"):
             raise ValueError("Retained Stable snapshot differs from owner review")
+    copy_root, copy_manifest = beta, manifest
+    if components:
+        if stable_candidate is None:
+            raise ValueError("Component retention requires a prepared Stable source candidate")
+        copy_root = pathlib.Path(stable_candidate).resolve()
+        copy_manifest = snapshot(copy_root)
+        if (copy_manifest.get("release_channel") != "beta"
+                or review.get("stable_candidate_sha256") != P.digest(copy_root / "cn-manifest.json")):
+            raise ValueError("Stable source candidate differs from owner review")
+        unaffected = set(P.REPOS) - set(components)
+        if payloads(manifest, unaffected) != payloads(copy_manifest, unaffected):
+            raise ValueError("Unselected repositories must match Beta")
+        # Bootstrap and root notices are shared even when the app source commits differ.
+        if {k: v for k, v in payloads(manifest).items() if k.split("/")[0] not in P.REPOS} != {
+                k: v for k, v in payloads(copy_manifest).items() if k.split("/")[0] not in P.REPOS}:
+            raise ValueError("Bootstrap must match Beta")
+        compare_component_retention(beta, copy_root, stable_base, components)
+    elif stable_candidate is not None:
+        raise ValueError("A separate candidate is only for component retention")
     report = review.get("report")
     if not isinstance(report, str) or not report.strip() or not pathlib.Path(report).is_file():
         raise ValueError("Keep the actual private validation report before promotion")
@@ -155,9 +203,9 @@ def promote(beta, evidence, output, stable_base=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = pathlib.Path(tempfile.mkdtemp(prefix=".cn-promote-", dir=output.parent)).resolve()
     try:
-        for entry in manifest["files"]:
-            P.copy_file(P.regular(beta, entry["path"]), stage / entry["path"])
-        promoted = copy.deepcopy(manifest)
+        for entry in copy_manifest["files"]:
+            P.copy_file(P.regular(copy_root, entry["path"]), stage / entry["path"])
+        promoted = copy.deepcopy(copy_manifest)
         if base:
             for repo in retained:
                 shutil.rmtree(stage / repo)
@@ -175,7 +223,10 @@ def promote(beta, evidence, output, stable_base=None):
         if owner:
             promoted["validation"].update(owner_authorized=True, fully_vehicle_validated=False,
                                           retained_repositories=retained)
-            if retained:
+            if components:
+                promoted["validation"]["retained_components"] = components
+                promoted["validation"]["stable_candidate_sha256"] = review["stable_candidate_sha256"]
+            if retained or components:
                 promoted["validation"]["retained_from"] = review["retained_from"]
         if upstream:
             promoted["validation"].update(upstream_commits=review["upstream_commits"],
@@ -210,6 +261,7 @@ def main():
     parser.add_argument("--evidence", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--stable-base", type=pathlib.Path)
+    parser.add_argument("--stable-candidate", type=pathlib.Path)
     args = parser.parse_args()
     try:
         result = promote(**vars(args))

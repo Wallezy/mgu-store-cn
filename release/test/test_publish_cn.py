@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 import publish_cn as U
 import test_prepare_cn as F
+from test_promote_cn import component_fixture
 
 P = F.M
 
@@ -49,6 +50,33 @@ class FakeRemote:
 
 
 class PublicationTests(F.PreparationTests):
+    def test_shared_app_publication_keeps_stable_trial_and_checks_public_beta(self):
+        beta, candidate, base, review, record = component_fixture(self)
+        target = self.root / "component-stable"
+        U.C.promote(beta, review, target, base, candidate)
+        self.output = target
+        remote = FakeRemote()
+        remote.channel = "stable"
+        for item in U.C.snapshot(base)["files"] + [{"path": "cn-manifest.json"}]:
+            remote.objects[item["path"]] = (base / item["path"]).read_bytes()
+
+        def download(url, file):
+            rel = url.removeprefix(P.BASES["beta"])
+            source = beta / ("cn-manifest.json" if rel.startswith("candidates/") else rel)
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(source.read_bytes())
+            return {}
+
+        with mock.patch.object(U, "download", side_effect=download):
+            result = self.execute(remote, "component-publication")
+            self.assertTrue(result["public_verified"])
+            self.assertTrue(any("ambient_config@" in name for name in remote.writes))
+            self.assertFalse(any("cluster-render@" in name for name in remote.writes))
+            remote.writes.clear()
+            with self.assertRaisesRegex(ValueError, "Stable changed"):
+                self.execute(remote, "component-stale")
+            self.assertFalse(remote.writes)
+
     def beta(self):
         return P.prepare(self.dirs["mgu-store"], self.dirs["idrive-apps"],
                          self.sources["mgu-store"], self.sources["idrive-apps"],

@@ -178,9 +178,19 @@ def publish(remote, source, work, execute):
         P.verified(file, manifest["promoted_from"])
         beta = P.read_json(file)
         retained = manifest.get("validation", {}).get("retained_repositories", []) if C.owner_reviewed(manifest) else []
-        from_beta = lambda m: {k: v for k, v in C.payloads(m).items() if k.split("/")[0] not in retained}
+        components = manifest.get("validation", {}).get("retained_components", {}) if C.owner_reviewed(manifest) else {}
+        excluded = set(retained) | set(components)
+        from_beta = lambda m: {k: v for k, v in C.payloads(m).items() if k.split("/")[0] not in excluded}
         if beta.get("release_channel") != "beta" or from_beta(beta) != from_beta(manifest):
             raise ValueError("Stable payload differs from the tested public Beta")
+        beta_components = work / "beta-components"
+        for repo in components:
+            for name in ("catalog.json", "LICENSE"):
+                rel = repo + "/" + name
+                item = next((e for e in beta["files"] if e["path"] == rel), None)
+                if not item or download(P.BASES["beta"] + rel, beta_components / rel) is None:
+                    raise ValueError("Public Beta component evidence missing")
+                P.verified(beta_components / rel, item["sha256"])
     elif manifest.get("installReady") is not False:
         raise ValueError("Beta must not claim Stable installation readiness")
     ci = check_ci(manifest, work)
@@ -196,7 +206,7 @@ def publish(remote, source, work, execute):
         C.snapshot(old_root)
     if remote.channel == "stable" and C.owner_reviewed(manifest):
         v = manifest["validation"]
-        if v["retained_repositories"]:
+        if v["retained_repositories"] or v.get("retained_components"):
             if old is None or P.digest(old_root / "cn-manifest.json") != v.get("retained_from"):
                 raise ValueError("Stable changed since its retained snapshot was reviewed")
             for repo in v["retained_repositories"]:
@@ -204,6 +214,8 @@ def publish(remote, source, work, execute):
                         or P.digest(old_root / repo / "catalog.json") != P.digest(source / repo / "catalog.json")
                         or old["repositories"][repo] != manifest["repositories"][repo]):
                     raise ValueError("Retained Stable repository changed: " + repo)
+            if v.get("retained_components"):
+                C.compare_component_retention(beta_components, source, old_root, v["retained_components"])
     validate_transition(old, manifest, old_root, source)
     current_sha = P.digest(old_root / "cn-manifest.json") if old else None
     old_files = {f["path"]: f for f in old["files"]} if old else {}
