@@ -4,6 +4,7 @@
 
 import argparse
 import copy
+import hashlib
 import json
 import pathlib
 import shutil
@@ -37,6 +38,7 @@ def owner_reviewed(manifest):
     v = manifest.get("validation", {})
     kept = v.get("retained_repositories", [])
     components = v.get("retained_components", {})
+    variants = v.get("channel_variants", {})
     return (manifest.get("status") == "stable-owner-reviewed"
             and v.get("method") == "owner-reviewed"
             and set(v.get("checks", [])) == set(OWNER_CHECKS)
@@ -45,8 +47,9 @@ def owner_reviewed(manifest):
             and isinstance(kept, list) and len(set(kept)) == len(kept)
             and set(kept) < set(P.REPOS)
             and retained_components_valid(components)
-            and not set(components).intersection(kept)
-            and (not (kept or components) or P.SHA.fullmatch(v.get("retained_from", "")))
+            and channel_variants_valid(variants, components)
+            and not (set(components) | set(variants)).intersection(kept)
+            and (not (kept or components or variants) or P.SHA.fullmatch(v.get("retained_from", "")))
             and all(r.get("integration") == {"context": P.CONTEXT, "state": "pending", "sha": r["commit"]}
                     for r in manifest["repositories"].values()))
 
@@ -58,15 +61,43 @@ def retained_components_valid(value):
                     for ids in value.values()))
 
 
-def compare_component_retention(beta, candidate, base, retained):
-    """New/shared entries match Beta exactly; selected trial entries remain exact Stable bytes."""
-    for repo, identities in retained.items():
+def channel_variants_valid(value, retained):
+    return (isinstance(value, dict) and set(value) <= set(P.REPOS)
+            and all(isinstance(entries, dict) and entries
+                    and not set(entries).intersection(retained.get(repo, []))
+                    and all(isinstance(identity, str) and P.IDENTITY.fullmatch(identity)
+                            and isinstance(pins, dict) and set(pins) == {"beta", "stable"}
+                            and all(isinstance(sha, str) and P.SHA.fullmatch(sha) for sha in pins.values())
+                            for identity, pins in entries.items())
+                    for repo, entries in value.items()))
+
+
+def component_digest(component):
+    """Pin the whole catalog entry, including dependencies and release notes."""
+    return hashlib.sha256(json.dumps(component, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def compare_component_retention(beta, candidate, base, retained, variants=None):
+    """Shared entries match Beta; retained entries match Stable; reviewed variants match both pins."""
+    variants = variants or {}
+    for repo in set(retained) | set(variants):
+        identities, reviewed = retained.get(repo, []), variants.get(repo, {})
         def entries(root):
             return {c["id"]: c for c in P.read_json(pathlib.Path(root) / repo / "catalog.json")["components"]}
         a, b, old = entries(beta), entries(candidate), entries(base)
-        if set(a) != set(b) or not set(identities) < set(b) or not set(identities) <= set(old):
+        selected = set(identities) | set(reviewed)
+        if set(a) != set(b) or not selected < set(b) or not selected <= set(old):
             raise ValueError("Retained component set must exist beside shared Beta components")
         for identity, component in b.items():
+            if identity in reviewed:
+                pins = reviewed[identity]
+                if component_digest(a[identity]) != pins["beta"] or component_digest(component) != pins["stable"]:
+                    raise ValueError("Channel variant differs from its reviewed entry: " + identity)
+                if (component["kind"] != old[identity]["kind"]
+                        or tuple(map(int, component["version"].split("."))) <= tuple(map(int, old[identity]["version"].split(".")))):
+                    raise ValueError("Channel variant requires a newer Stable version of the same component: " + identity)
+                continue
             expected = old[identity] if identity in identities else a[identity]
             if component != expected:
                 raise ValueError("Component differs from its reviewed channel: " + identity)
@@ -166,10 +197,12 @@ def promote(beta, evidence, output, stable_base=None, stable_candidate=None):
     if not isinstance(retained, list) or len(set(retained)) != len(retained) or not set(retained) < set(P.REPOS):
         raise ValueError("Retain only a proper subset of repositories")
     components = review.get("retained_components", {})
-    if not retained_components_valid(components) or set(components).intersection(retained):
+    variants = review.get("channel_variants", {})
+    if (not retained_components_valid(components) or not channel_variants_valid(variants, components)
+            or (set(components) | set(variants)).intersection(retained)):
         raise ValueError("Invalid retained component selection")
     base = None
-    if retained or components:
+    if retained or components or variants:
         if not owner or stable_base is None:
             raise ValueError("Retaining Stable requires explicit owner review and its exact snapshot")
         stable_base = pathlib.Path(stable_base).resolve()
@@ -177,7 +210,7 @@ def promote(beta, evidence, output, stable_base=None, stable_candidate=None):
         if base.get("release_channel") != "stable" or review.get("retained_from") != P.digest(stable_base / "cn-manifest.json"):
             raise ValueError("Retained Stable snapshot differs from owner review")
     copy_root, copy_manifest = beta, manifest
-    if components:
+    if components or variants:
         if stable_candidate is None:
             raise ValueError("Component retention requires a prepared Stable source candidate")
         copy_root = pathlib.Path(stable_candidate).resolve()
@@ -185,14 +218,14 @@ def promote(beta, evidence, output, stable_base=None, stable_candidate=None):
         if (copy_manifest.get("release_channel") != "beta"
                 or review.get("stable_candidate_sha256") != P.digest(copy_root / "cn-manifest.json")):
             raise ValueError("Stable source candidate differs from owner review")
-        unaffected = set(P.REPOS) - set(components)
+        unaffected = set(P.REPOS) - set(components) - set(variants)
         if payloads(manifest, unaffected) != payloads(copy_manifest, unaffected):
             raise ValueError("Unselected repositories must match Beta")
         # Bootstrap and root notices are shared even when the app source commits differ.
         if {k: v for k, v in payloads(manifest).items() if k.split("/")[0] not in P.REPOS} != {
                 k: v for k, v in payloads(copy_manifest).items() if k.split("/")[0] not in P.REPOS}:
             raise ValueError("Bootstrap must match Beta")
-        compare_component_retention(beta, copy_root, stable_base, components)
+        compare_component_retention(beta, copy_root, stable_base, components, variants)
     elif stable_candidate is not None:
         raise ValueError("A separate candidate is only for component retention")
     report = review.get("report")
@@ -225,8 +258,11 @@ def promote(beta, evidence, output, stable_base=None, stable_candidate=None):
                                           retained_repositories=retained)
             if components:
                 promoted["validation"]["retained_components"] = components
+            if variants:
+                promoted["validation"]["channel_variants"] = variants
+            if components or variants:
                 promoted["validation"]["stable_candidate_sha256"] = review["stable_candidate_sha256"]
-            if retained or components:
+            if retained or components or variants:
                 promoted["validation"]["retained_from"] = review["retained_from"]
         if upstream:
             promoted["validation"].update(upstream_commits=review["upstream_commits"],

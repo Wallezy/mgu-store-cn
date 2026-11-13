@@ -2,6 +2,8 @@
 """Synthetic release lifecycle fixtures; no vehicle or public publication."""
 
 import pathlib
+import copy
+import json
 import sys
 import unittest
 
@@ -46,7 +48,89 @@ def component_fixture(case):
     return beta, candidate, base, review, record
 
 
+def variant_fixture(case):
+    _, _, base, review, record = component_fixture(case)
+    components = case.catalogs["idrive-apps"]["components"]
+    trial = copy.deepcopy(next(c for c in components if c["id"] == "cluster-render"))
+    old = M.read_json(base / "idrive-apps/source-catalog.json")["components"]
+    stable_renderer = next(c for c in old if c["id"] == "cluster-render")
+    renderer = next(c for c in components if c["id"] == "cluster-render")
+    app = next(c for c in components if c["id"] == "robertn_waze_cluster")
+    outputs = {}
+    for channel, version, selected_renderer in (
+            ("stable", "1.0.1", stable_renderer), ("beta", "1.0.2", trial)):
+        renderer.clear()
+        renderer.update(copy.deepcopy(selected_renderer))
+        package = case.dirs["idrive-apps"] / ("robertn_waze_cluster@" + version + ".tgz")
+        write_tar(package, {
+            "mgu-app.json": json.dumps({"id": "robertn_waze_cluster", "version": version}).encode(),
+            "payload.txt": ("shared fix; " + channel).encode(),
+        })
+        app.update(version=version, artifact={"name": package.name, "url": package.name,
+                   "size": package.stat().st_size, "sha256": M.digest(package)})
+        case.write_evidence()
+        target = case.root / ("variant-" + channel)
+        M.prepare(case.dirs["mgu-store"], case.dirs["idrive-apps"],
+                  case.sources["mgu-store"], case.sources["idrive-apps"],
+                  case.bootstrap, case.validation, target, channel="beta")
+        outputs[channel] = target
+    pins = {}
+    for channel, target in outputs.items():
+        entry = next(c for c in M.read_json(target / "idrive-apps/catalog.json")["components"]
+                     if c["id"] == "robertn_waze_cluster")
+        pins[channel] = C.component_digest(entry)
+    record.update(snapshot_sha256=M.digest(outputs["beta"] / "cn-manifest.json"),
+                  stable_candidate_sha256=M.digest(outputs["stable"] / "cn-manifest.json"),
+                  channel_variants={"idrive-apps": {"robertn_waze_cluster": pins}})
+    M.write_json(review, record)
+    return outputs["beta"], outputs["stable"], base, review, record
+
+
 class PromotionTests(PreparationTests):
+    def test_shared_fix_updates_reviewed_variants_and_retains_renderer(self):
+        beta, candidate, base, review, record = variant_fixture(self)
+        target = self.root / "variant-promoted"
+        promoted = C.promote(beta, review, target, base, candidate)
+        self.assertTrue(C.owner_reviewed(promoted))
+        entries = {c["id"]: c for c in M.read_json(target / "idrive-apps/catalog.json")["components"]}
+        self.assertEqual(entries["robertn_waze_cluster"]["version"], "1.0.1")
+        self.assertEqual(entries["cluster-render"]["version"], "1.0.0")
+        self.assertEqual(promoted["validation"]["channel_variants"], record["channel_variants"])
+        record["channel_variants"]["idrive-apps"]["robertn_waze_cluster"]["stable"] = "f" * 64
+        M.write_json(review, record)
+        with self.assertRaisesRegex(ValueError, "variant differs"):
+            C.promote(beta, review, self.root / "wrong-variant", base, candidate)
+
+    def test_variant_metadata_and_undeclared_changes_are_refused(self):
+        beta, candidate, base, review, record = variant_fixture(self)
+        with self.assertRaisesRegex(ValueError, "differs from its reviewed channel"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"])
+        path = candidate / "idrive-apps/catalog.json"
+        catalog = M.read_json(path)
+        next(c for c in catalog["components"] if c["id"] == "robertn_waze_cluster")["releaseNotes"] = [
+            {"version": "1.0.1", "changes": ["Unreviewed metadata"]}]
+        M.write_json(path, catalog)
+        with self.assertRaisesRegex(ValueError, "variant differs"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"], record["channel_variants"])
+
+    def test_variant_must_increase_stable_version_and_have_owner_review(self):
+        beta, candidate, base, review, record = component_fixture(self)
+        pins = {}
+        for channel, target in (("beta", beta), ("stable", candidate)):
+            entry = next(c for c in M.read_json(target / "idrive-apps/catalog.json")["components"]
+                         if c["id"] == "robertn_waze_cluster")
+            pins[channel] = C.component_digest(entry)
+        variants = {"idrive-apps": {"robertn_waze_cluster": pins}}
+        with self.assertRaisesRegex(ValueError, "newer Stable version"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"], variants)
+        record.update(channel_variants=variants, method="owner-vehicle",
+                      checks={c: "passed" for c in C.CHECKS})
+        M.write_json(review, record)
+        with self.assertRaisesRegex(ValueError, "explicit owner review"):
+            C.promote(beta, review, self.root / "no-owner-review", base, candidate)
+        self.assertFalse(C.channel_variants_valid(variants, {"idrive-apps": ["robertn_waze_cluster"]}))
+        self.assertFalse(C.channel_variants_valid({"idrive-apps": {"robertn_waze_cluster": {"stable": "f" * 64}}}, {}))
+
     def test_shared_new_app_preserves_only_selected_stable_components(self):
         beta, candidate, base, review, record = component_fixture(self)
         target = self.root / "component-stable"

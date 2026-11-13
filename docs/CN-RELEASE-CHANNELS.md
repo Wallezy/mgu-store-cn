@@ -146,3 +146,13 @@ including its artifact, icon, dependencies and release notes. Each candidate
 keeps its own source commit and must pass that commit's CI. Bootstrap and
 unselected repositories remain identical. This allows the same new app on both
 channels without moving a trial into Stable.
+
+A shared fix can update an app that has a separate Beta trial. The owner review
+lists `channel_variants` as repository → component ID → `{beta, stable}`, where
+each value is `component_digest` of that channel's complete catalog entry.
+Both candidates, their exact source commits and the current Stable baseline are
+pinned. A variant must already exist, retain its component kind and increase its
+Stable version. The publisher checks both entry hashes against public Beta and
+the reviewed Stable snapshot, including dependencies and release notes. Other
+components either match public Beta or remain exact retained Stable entries.
+This publishes a common fix in both app variants while preserving Beta's trial.

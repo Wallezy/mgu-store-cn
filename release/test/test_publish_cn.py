@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 import publish_cn as U
 import test_prepare_cn as F
-from test_promote_cn import component_fixture
+from test_promote_cn import component_fixture, variant_fixture
 
 P = F.M
 
@@ -50,6 +50,44 @@ class FakeRemote:
 
 
 class PublicationTests(F.PreparationTests):
+    def test_publication_checks_channel_variant_metadata_before_writing(self):
+        beta, candidate, base, review, record = variant_fixture(self)
+        target = self.root / "variant-publication"
+        U.C.promote(beta, review, target, base, candidate)
+        self.output = target
+        remote = FakeRemote()
+        remote.channel = "stable"
+        for item in U.C.snapshot(base)["files"] + [{"path": "cn-manifest.json"}]:
+            remote.objects[item["path"]] = (base / item["path"]).read_bytes()
+
+        def download(url, file):
+            rel = url.removeprefix(P.BASES["beta"])
+            source = beta / ("cn-manifest.json" if rel.startswith("candidates/") else rel)
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(source.read_bytes())
+            return {}
+
+        with mock.patch.object(U, "download", side_effect=download):
+            path, manifest_path = target / "idrive-apps/catalog.json", target / "cn-manifest.json"
+            saved, saved_manifest = path.read_bytes(), manifest_path.read_bytes()
+            catalog = P.read_json(path)
+            next(c for c in catalog["components"] if c["id"] == "robertn_waze_cluster")["description"] = "unreviewed"
+            P.write_json(path, catalog)
+            manifest = P.read_json(manifest_path)
+            for item in manifest["files"]:
+                if item["path"] == "idrive-apps/catalog.json":
+                    item.update(size=path.stat().st_size, sha256=P.digest(path))
+            P.write_json(manifest_path, manifest)
+            with self.assertRaisesRegex(ValueError, "variant differs"):
+                self.execute(remote, "variant-tampered")
+            self.assertFalse(remote.writes)
+            path.write_bytes(saved)
+            manifest_path.write_bytes(saved_manifest)
+            result = self.execute(remote, "variant-accepted")
+            self.assertTrue(result["public_verified"])
+            self.assertTrue(any("robertn_waze_cluster@1.0.1" in p for p in remote.writes))
+            self.assertFalse(any("robertn_waze_cluster@1.0.2" in p or "cluster-render@" in p for p in remote.writes))
+
     def test_shared_app_publication_keeps_stable_trial_and_checks_public_beta(self):
         beta, candidate, base, review, record = component_fixture(self)
         target = self.root / "component-stable"
