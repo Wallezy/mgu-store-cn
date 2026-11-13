@@ -799,6 +799,18 @@ function renderComponents(list) {
     if (c.compat === 'no') { meta.push('Not for this head unit'); }
     if (c.blocked) { meta.push('Not installable'); }
     main.appendChild(el('div', 'mut', meta.join(' · ')));
+    if (Array.isArray(c.releaseNotes) && c.releaseNotes.length) {
+      var notes = el('details');
+      notes.appendChild(el('summary', null, '更新说明'));
+      c.releaseNotes.forEach(function (n) {
+        notes.appendChild(el('strong', null, n.version));
+        if (n.upstreamVersion) notes.appendChild(el('div', 'mut', '上游 ' + n.upstreamVersion + ' · 国内修订 ' + (n.cnRevision || 1)));
+        var items = el('ul');
+        n.changes.forEach(function (line) { items.appendChild(el('li', null, line)); });
+        notes.appendChild(items);
+      });
+      main.appendChild(notes);
+    }
     if (c.blocked) { main.appendChild(el('div', 'bad', c.blocked)); }
     if (c.error) { main.appendChild(el('div', 'bad', c.error)); }
     row.appendChild(main);

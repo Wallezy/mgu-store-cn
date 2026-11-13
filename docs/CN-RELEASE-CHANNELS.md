@@ -122,3 +122,17 @@ updates use the owner's dual-channel policy above. Official-package
 mirrors use the existing maintenance scripts and cannot write either CN channel.
 Monitoring does not authorize merging unreviewed code, fabricating vehicle
 evidence or operating a car.
+
+## Explicit owner-reviewed improvements
+
+An owner may explicitly authorize a small improvement for both channels without
+a vehicle trial. `owner-reviewed` records that authorization, source checks,
+code review and reproducible builds; it never claims vehicle validation.
+Exact-commit CI, immutable packages and public verification remain required.
+
+When Beta contains a separate trial, promote only the shared repository and
+retain the other repository from an exact current Stable snapshot using
+`--stable-base`. The publisher verifies the changed payloads against the public
+Beta candidate and every retained catalog and payload against current Stable.
+A changed Stable baseline stops publication. This does not promote a Beta-only
+trial or replace its packages.

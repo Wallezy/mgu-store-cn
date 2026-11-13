@@ -13,6 +13,7 @@ import prepare_cn as P
 
 CHECKS = ("source_checks", "installation", "migration", "component_update_order",
           "restart", "settings", "update_channel", "self_update", "rollback")
+OWNER_CHECKS = ("source_checks", "code_review", "reproducible_build")
 UPSTREAM_CHECKS = ("source_checks", "upstream_review", "reproducible_build")
 
 
@@ -30,6 +31,27 @@ def reviewed_upstream(manifest):
             and upstream_commits(validation.get("upstream_commits"))
             and all(r.get("integration") == {"context": P.CONTEXT, "state": "pending", "sha": r["commit"]}
                     for r in manifest["repositories"].values()))
+
+
+def owner_reviewed(manifest):
+    v = manifest.get("validation", {})
+    kept = v.get("retained_repositories", [])
+    return (manifest.get("status") == "stable-owner-reviewed"
+            and v.get("method") == "owner-reviewed"
+            and set(v.get("checks", [])) == set(OWNER_CHECKS)
+            and v.get("fully_vehicle_validated") is False
+            and v.get("owner_authorized") is True
+            and isinstance(kept, list) and len(set(kept)) == len(kept)
+            and set(kept) < set(P.REPOS)
+            and (not kept or P.SHA.fullmatch(v.get("retained_from", "")))
+            and all(r.get("integration") == {"context": P.CONTEXT, "state": "pending", "sha": r["commit"]}
+                    for r in manifest["repositories"].values()))
+
+
+def payloads(manifest, repositories=None):
+    return {e["path"]: (e["size"], e["sha256"]) for e in manifest["files"]
+            if not e["path"].endswith("/catalog.json")
+            and (repositories is None or e["path"].split("/")[0] in repositories)}
 
 
 def snapshot(root):
@@ -97,7 +119,7 @@ def snapshot(root):
     return manifest
 
 
-def promote(beta, evidence, output):
+def promote(beta, evidence, output, stable_base=None):
     beta, evidence, output = pathlib.Path(beta).resolve(), pathlib.Path(evidence), pathlib.Path(output).absolute()
     manifest = snapshot(beta)
     if manifest.get("release_channel") != "beta":
@@ -105,13 +127,26 @@ def promote(beta, evidence, output):
     review = P.read_json(evidence)
     beta_sha = P.digest(beta / "cn-manifest.json")
     upstream = review.get("method") == "reviewed-upstream"
-    checks = UPSTREAM_CHECKS if upstream else CHECKS
+    owner = review.get("method") == "owner-reviewed"
+    checks = OWNER_CHECKS if owner else UPSTREAM_CHECKS if upstream else CHECKS
     if (review.get("schema") != 1 or review.get("snapshot_sha256") != beta_sha
             or review.get("state") != "passed"
-            or review.get("method") not in ("owner-vehicle", "head-unit-emulator-and-vehicle", "reviewed-upstream")
+            or review.get("method") not in ("owner-vehicle", "head-unit-emulator-and-vehicle", "reviewed-upstream", "owner-reviewed")
             or any(review.get("checks", {}).get(c) != "passed" for c in checks)
-            or (upstream and not upstream_commits(review.get("upstream_commits")))):
+            or (upstream and not upstream_commits(review.get("upstream_commits")))
+            or (owner and review.get("owner_authorized") is not True)):
         raise ValueError("Promotion requires passed validation of this exact Beta snapshot")
+    retained = review.get("retained_repositories", [])
+    if not isinstance(retained, list) or len(set(retained)) != len(retained) or not set(retained) < set(P.REPOS):
+        raise ValueError("Retain only a proper subset of repositories")
+    base = None
+    if retained:
+        if not owner or stable_base is None:
+            raise ValueError("Retaining Stable requires explicit owner review and its exact snapshot")
+        stable_base = pathlib.Path(stable_base).resolve()
+        base = snapshot(stable_base)
+        if base.get("release_channel") != "stable" or review.get("retained_from") != P.digest(stable_base / "cn-manifest.json"):
+            raise ValueError("Retained Stable snapshot differs from owner review")
     report = review.get("report")
     if not isinstance(report, str) or not report.strip() or not pathlib.Path(report).is_file():
         raise ValueError("Keep the actual private validation report before promotion")
@@ -123,10 +158,25 @@ def promote(beta, evidence, output):
         for entry in manifest["files"]:
             P.copy_file(P.regular(beta, entry["path"]), stage / entry["path"])
         promoted = copy.deepcopy(manifest)
+        if base:
+            for repo in retained:
+                shutil.rmtree(stage / repo)
+                for entry in base["files"]:
+                    if entry["path"].startswith(repo + "/"):
+                        P.copy_file(P.regular(stable_base, entry["path"]), stage / entry["path"])
+                promoted["repositories"][repo] = copy.deepcopy(base["repositories"][repo])
+            promoted["files"] = [e for e in promoted["files"] if e["path"].split("/")[0] not in retained] + [
+                copy.deepcopy(e) for e in base["files"] if e["path"].split("/")[0] in retained]
+
         promoted.update(release_channel="stable", base_url=P.BASES["stable"],
-                        status="stable-upstream-reviewed" if upstream else "stable-validated", installReady=True,
+                        status="stable-owner-reviewed" if owner else "stable-upstream-reviewed" if upstream else "stable-validated", installReady=True,
                         promoted_from=beta_sha,
                         validation={"method": review["method"], "checks": list(checks)})
+        if owner:
+            promoted["validation"].update(owner_authorized=True, fully_vehicle_validated=False,
+                                          retained_repositories=retained)
+            if retained:
+                promoted["validation"]["retained_from"] = review["retained_from"]
         if upstream:
             promoted["validation"].update(upstream_commits=review["upstream_commits"],
                                           fully_vehicle_validated=False)
@@ -137,7 +187,7 @@ def promote(beta, evidence, output):
             P.write_json(file, catalog)
             record = promoted["repositories"][repo]
             record["catalog_url"] = P.BASES["stable"] + repo + "/catalog.json"
-            record["integration"] = {"context": P.CONTEXT, "state": "pending" if upstream else "success",
+            record["integration"] = {"context": P.CONTEXT, "state": "pending" if upstream or owner else "success",
                                      "sha": record["commit"]}
         for entry in promoted["files"]:
             file = stage / entry["path"]
@@ -159,6 +209,7 @@ def main():
     parser.add_argument("--beta", required=True, type=pathlib.Path)
     parser.add_argument("--evidence", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
+    parser.add_argument("--stable-base", type=pathlib.Path)
     args = parser.parse_args()
     try:
         result = promote(**vars(args))

@@ -86,9 +86,17 @@ function screens() {
         expiresAt: 0, status: 'pending', error: null } });
     const webOn = Object.assign({}, st, { web: { enabled: true, urls: ['http://172.16.222.97:8470/'], error: null } });
     const main = [{ name: 'main' }];
+    const notes = state();
+    notes.busy = null;
+    notes.components.find((c) => c.id === 'robertn_store').releaseNotes = [
+        { version: '0.9.42', upstreamVersion: '0.9.39', cnRevision: 2,
+            changes: ['应用详情新增中文更新说明，可翻看历史版本。', '显示对应上游版本和国内版修订，方便核对。'] },
+        { version: '0.9.41', upstreamVersion: '0.9.39', cnRevision: 1, changes: ['新增安全模式提示和退出入口。'] }];
     return [
         ['store', { tab: 'store', stack: main }],
         ['store-apps', { tab: 'store', filter: 'app', stack: main, focus: 9 }],
+        ['app-notes', { stack: main.concat([{ name: 'app', id: 'robertn_store', notes: 0 }]) }, notes],
+        ['app-notes-history', { stack: main.concat([{ name: 'app', id: 'robertn_store', notes: 1 }]) }, notes],
         ['app-update', { stack: main.concat([{ name: 'app', id: 'gauges' }]) }],
         ['app-downloading', { stack: main.concat([{ name: 'app', id: 'doom' }]) }],
         ['app-incompatible', { stack: main.concat([{ name: 'app', id: 'oap-cardash' }]) }],

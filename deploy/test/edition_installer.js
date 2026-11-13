@@ -149,6 +149,14 @@ assert(!installer.stableMigrationReady(reviewed));
 reviewed.validation.checks.push('reproducible_build');
 reviewed.installReady = false;
 assert(!installer.stableMigrationReady(reviewed));
+const ownerReviewed = JSON.parse(JSON.stringify(reviewed));
+ownerReviewed.installReady = true;
+ownerReviewed.status = 'stable-owner-reviewed';
+ownerReviewed.validation = { method: 'owner-reviewed', owner_authorized: true, fully_vehicle_validated: false,
+    checks: ['source_checks', 'code_review', 'reproducible_build'] };
+assert.strictEqual(installer.stableMigrationReady(ownerReviewed), true);
+ownerReviewed.validation.owner_authorized = false;
+assert.strictEqual(installer.stableMigrationReady(ownerReviewed), false);
 console.log('ok - reviewed upstream Stable migration requires release readiness and complete source review');
 
 const item = files.find((f) => f.path.endsWith('robertn_waze_cluster@1.2.3.tgz'));

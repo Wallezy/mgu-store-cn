@@ -169,17 +169,17 @@ def publish(remote, source, work, execute):
                                      for r in manifest["repositories"].values()))
         if (manifest.get("installReady") is not True
                 or not P.SHA.fullmatch(manifest.get("promoted_from", ""))
-                or not (vehicle_validated or C.reviewed_upstream(manifest))):
-            raise ValueError("Stable publication requires an exact vehicle-validated or reviewed-upstream promotion")
+                or not (vehicle_validated or C.reviewed_upstream(manifest) or C.owner_reviewed(manifest))):
+            raise ValueError("Stable publication requires an exact vehicle-validated, reviewed-upstream or owner-reviewed promotion")
         rel = "candidates/" + manifest["promoted_from"] + "/cn-manifest.json"
         file = work / "beta-proof.json"
         if download(P.BASES["beta"] + rel, file) is None:
             raise ValueError("Promoted Beta candidate was not publicly published")
         P.verified(file, manifest["promoted_from"])
         beta = P.read_json(file)
-        unchanged = lambda m: {e["path"]: (e["size"], e["sha256"]) for e in m["files"]
-                              if not e["path"].endswith("/catalog.json")}
-        if beta.get("release_channel") != "beta" or unchanged(beta) != unchanged(manifest):
+        retained = manifest.get("validation", {}).get("retained_repositories", []) if C.owner_reviewed(manifest) else []
+        from_beta = lambda m: {k: v for k, v in C.payloads(m).items() if k.split("/")[0] not in retained}
+        if beta.get("release_channel") != "beta" or from_beta(beta) != from_beta(manifest):
             raise ValueError("Stable payload differs from the tested public Beta")
     elif manifest.get("installReady") is not False:
         raise ValueError("Beta must not claim Stable installation readiness")
@@ -194,6 +194,16 @@ def publish(remote, source, work, execute):
         for item in old["files"]:
             remote.verify(item["path"], item, old_root)
         C.snapshot(old_root)
+    if remote.channel == "stable" and C.owner_reviewed(manifest):
+        v = manifest["validation"]
+        if v["retained_repositories"]:
+            if old is None or P.digest(old_root / "cn-manifest.json") != v.get("retained_from"):
+                raise ValueError("Stable changed since its retained snapshot was reviewed")
+            for repo in v["retained_repositories"]:
+                if (C.payloads(old, [repo]) != C.payloads(manifest, [repo])
+                        or P.digest(old_root / repo / "catalog.json") != P.digest(source / repo / "catalog.json")
+                        or old["repositories"][repo] != manifest["repositories"][repo]):
+                    raise ValueError("Retained Stable repository changed: " + repo)
     validate_transition(old, manifest, old_root, source)
     current_sha = P.digest(old_root / "cn-manifest.json") if old else None
     old_files = {f["path"]: f for f in old["files"]} if old else {}

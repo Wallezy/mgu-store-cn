@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 应用详情可查看简洁中文更新说明、历史版本和上游版本对应关系。
+
 ## 0.9.41
 
 The CN Store displays safe mode and offers its exit action in the native and

@@ -41,6 +41,32 @@ class PromotionTests(PreparationTests):
         self.assertEqual(C.snapshot(self.output)["release_channel"], "beta")
         self.assertEqual(C.snapshot(target)["release_channel"], "stable")
 
+    def test_owner_review_retains_stable_apps_and_requires_exact_authorization(self):
+        self.beta()
+        path, record = self.evidence()
+        base_dir = self.root / "base-stable"
+        C.promote(self.output, path, base_dir)
+        base = C.snapshot(base_dir)
+        record.update(method="owner-reviewed", owner_authorized=True,
+                      checks={c: "passed" for c in C.OWNER_CHECKS},
+                      retained_repositories=["idrive-apps"], retained_from=M.digest(base_dir / "cn-manifest.json"))
+        M.write_json(path, record)
+        target = self.root / "owner-stable"
+        promoted = C.promote(self.output, path, target, base_dir)
+        self.assertTrue(C.owner_reviewed(promoted))
+        self.assertFalse(promoted["validation"]["fully_vehicle_validated"])
+        self.assertEqual(C.payloads(base, ["idrive-apps"]), C.payloads(promoted, ["idrive-apps"]))
+        self.assertEqual((base_dir / "idrive-apps/catalog.json").read_bytes(), (target / "idrive-apps/catalog.json").read_bytes())
+        record["owner_authorized"] = False
+        M.write_json(path, record)
+        with self.assertRaisesRegex(ValueError, "exact Beta"):
+            C.promote(self.output, path, self.root / "unauthorized", base_dir)
+        record["owner_authorized"] = True
+        record["retained_from"] = "f" * 64
+        M.write_json(path, record)
+        with self.assertRaisesRegex(ValueError, "differs"):
+            C.promote(self.output, path, self.root / "stale", base_dir)
+
     def test_incomplete_self_update_evidence_blocks_promotion(self):
         self.beta()
         path, record = self.evidence()

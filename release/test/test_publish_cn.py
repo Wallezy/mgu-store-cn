@@ -143,6 +143,58 @@ class PublicationTests(F.PreparationTests):
         self.assertIn("NOTICE.txt", result["affected_paths"])
         self.assertEqual(json.loads(remote.objects["cn-manifest.json"])["status"], "another-publisher")
 
+    def test_owner_review_retained_repository_and_stale_baseline(self):
+        self.beta()
+        beta_bytes = (self.output / "cn-manifest.json").read_bytes()
+        report = self.root / "owner.txt"
+        report.write_text("Synthetic explicit owner approval; no vehicle validation.")
+        review = self.root / "review.json"
+        record = {"schema": 1, "snapshot_sha256": P.digest(self.output / "cn-manifest.json"),
+                  "state": "passed", "method": "owner-reviewed", "owner_authorized": True,
+                  "report": str(report), "checks": {c: "passed" for c in U.C.OWNER_CHECKS}}
+        P.write_json(review, record)
+        base = self.root / "stable-base"
+        U.C.promote(self.output, review, base)
+        record.update(retained_repositories=["idrive-apps"], retained_from=P.digest(base / "cn-manifest.json"))
+        P.write_json(review, record)
+        target = self.root / "stable-update"
+        U.C.promote(self.output, review, target, base)
+        self.output = target
+        remote = FakeRemote()
+        remote.channel = "stable"
+        for f in U.C.snapshot(base)["files"] + [{"path": "cn-manifest.json"}]:
+            remote.objects[f["path"]] = (base / f["path"]).read_bytes()
+
+        def download(url, file):
+            file.write_bytes(beta_bytes)
+            return {}
+
+        with mock.patch.object(U, "download", side_effect=download):
+            cat_path = target / "idrive-apps/catalog.json"
+            root_path = target / "cn-manifest.json"
+            saved_cat, saved_root = cat_path.read_bytes(), root_path.read_bytes()
+            catalog = P.read_json(cat_path)
+            catalog["components"][0]["description"] = "unapproved retained change"
+            P.write_json(cat_path, catalog)
+            altered = P.read_json(root_path)
+            for f in altered["files"]:
+                if f["path"] == "idrive-apps/catalog.json":
+                    f.update(size=cat_path.stat().st_size, sha256=P.digest(cat_path))
+            P.write_json(root_path, altered)
+            with self.assertRaisesRegex(ValueError, "Retained Stable repository changed"):
+                self.execute(remote, "tampered-retained")
+            self.assertFalse(remote.writes)
+            cat_path.write_bytes(saved_cat)
+            root_path.write_bytes(saved_root)
+            result = self.execute(remote, "owner-publish")
+            self.assertTrue(result["public_verified"])
+            self.assertFalse(result["vehicle_validated"])
+            self.assertFalse(any(p.startswith("idrive-apps/") for p in remote.writes))
+            remote.writes.clear()
+            with self.assertRaisesRegex(ValueError, "Stable changed"):
+                self.execute(remote, "stale-owner-publish")
+            self.assertFalse(remote.writes)
+
     def test_stable_needs_promotion_and_does_not_accept_beta(self):
         self.beta()
         remote = FakeRemote()

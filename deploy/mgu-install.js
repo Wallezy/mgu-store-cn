@@ -1047,6 +1047,9 @@ function stableMigrationReady(manifest) {
     if (manifest.installReady !== true) return false;
     const repos = ['mgu-store', 'idrive-apps'], v = manifest.validation || {};
     const checks = ['source_checks', 'upstream_review', 'reproducible_build'];
+    const ownerReviewed = manifest.status === 'stable-owner-reviewed' && v.method === 'owner-reviewed' &&
+        v.owner_authorized === true && v.fully_vehicle_validated === false && Array.isArray(v.checks) &&
+        v.checks.length === 3 && ['source_checks', 'code_review', 'reproducible_build'].every((c) => v.checks.includes(c));
     const reviewed = manifest.status === 'stable-upstream-reviewed' && v.method === 'reviewed-upstream' &&
         v.fully_vehicle_validated === false && Array.isArray(v.checks) &&
         v.checks.length === checks.length && checks.every((c) => v.checks.includes(c)) &&
@@ -1055,7 +1058,7 @@ function stableMigrationReady(manifest) {
     return repos.every((repo) => {
         const r = (manifest.repositories || {})[repo], s = r && r.integration;
         return s && s.context === 'release-check/cn-integration' &&
-            s.state === (reviewed ? 'pending' : 'success') && s.sha === r.commit;
+            s.state === (reviewed || ownerReviewed ? 'pending' : 'success') && s.sha === r.commit;
     });
 }
 async function migrateCn(o) {

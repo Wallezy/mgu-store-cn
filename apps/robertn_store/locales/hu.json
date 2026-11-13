@@ -195,6 +195,9 @@
     "May cause CarPlay issues": "CarPlay-problémákat okozhat",
     "On the iPhone, turn on Maximize Compatibility": "Az iPhone-on kapcsolja be: Kompatibilitás maximalizálása",
     "This network is 5 GHz only: CarPlay audio may drop": "Ez a hálózat csak 5 GHz-es: a CarPlay hangja kimaradhat",
-    "Phone over USB": "Telefon USB-n keresztül"
+    "Phone over USB": "Telefon USB-n keresztül",
+    "What's new": "What's new",
+    "Next version ({0}/{1})": "Next version ({0}/{1})",
+    "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
   }
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 更新目录传递版本说明；手机管理页可展开查看更新内容。
+
 ## 0.8.43
 
 - CN state and Store requests support safe mode while preserving managed domestic channels and migration locks. Requires CN deploy 0.8.19.

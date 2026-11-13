@@ -62,3 +62,15 @@ Cars update each component on its own, in any order. A component that
 needs a newer partner says so in `requires`; otherwise it keeps working
 with the partners' published versions (AGENTS.md, "Updates must work in
 any order").
+
+## CN user-facing update notes
+
+Each CN release updates `release/notes.json`: `version: "next"` for the new entry (stamped to its CN version), upstream
+version and CN revision, newest first. Write 1–3 short Chinese bullets (at most
+32 characters each) describing visible features or fixed problems. Avoid commit
+IDs, file names, implementation terms and vague “优化体验”. Keep prior CN entries;
+never infer CN notes by matching duplicate upstream CHANGELOG headings.
+
+`releaseNotes` is optional for older catalogs. A missing entry means no notes
+were supplied; never invent historical changes. Maintainers include notes for
+changed applications in their channel catalog and preserve Beta-only packages.

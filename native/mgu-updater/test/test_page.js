@@ -27,7 +27,7 @@ const sent = [];
 let pageState = { updater: { version: 'x' }, online: true, sources: [], tokens: [], components: [] };
 let pollPage;
 const pending = [];
-global.document = { getElementById: el, createElement: () => ({ value: '', textContent: '', appendChild() {} }) };
+global.document = { getElementById: el, createElement: (tag) => ({ tag, value: '', textContent: '', children: [], appendChild(c) { this.children.push(c); } }) };
 global.location = { hash: '#t=abc', pathname: '/', reload() {} };
 global.history = { replaceState() {} };
 global.sessionStorage = { setItem() {}, getItem: () => 'abc', removeItem() {} };
@@ -47,6 +47,14 @@ const submit = () => els.addForm.onsubmit({ preventDefault() {} });
 const assert = require('assert');
 (async () => {
     await tick();
+    pageState.components = [{ id: 'example', version: '1.1.0', releaseNotes: [{ version: '1.1.0',
+        changes: ['<script>alert(1)</script>'], upstreamVersion: '1.0.0', cnRevision: 1 }] }];
+    pollPage();
+    await tick();
+    const texts = (n) => [n.textContent].concat(...(n.children || []).map(texts));
+    assert(texts(els.components).includes('<script>alert(1)</script>'), 'notes rendered as literal text');
+    assert(texts(els.components).includes('更新说明'), 'notes entry is discoverable');
+    pageState.components = [];
     // pasted and Add tapped at once: lists first, adds nothing
     els.addValue.value = 'O/R';
     els.addValue.oninput();
