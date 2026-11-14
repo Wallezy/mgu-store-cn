@@ -69,11 +69,11 @@
   "mgu-render": [
     {
       "version": "0.6.23",
-      "upstreamVersion": "0.6.21",
-      "cnRevision": 2,
       "changes": [
         "修复多套渲染服务共存时，交互应用被切回旧服务的问题。"
-      ]
+      ],
+      "upstreamVersion": "0.6.21",
+      "cnRevision": 2
     },
     {
       "version": "0.6.22",
