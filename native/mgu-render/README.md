@@ -304,7 +304,7 @@ restarts), which the link replaces.
   file is still there.
 - The socket unit stopping (uninstall) removes our socket and our link
   (`--unshare`), nothing else.
-- *Kit apps sent back* (`src/kit.c`): an idrive7-apps kit app (its folder
+- *Legacy kit apps sent back* (`src/kit.c`): an idrive7-apps kit app (its folder
   has `source/javascript/kit/app-spec.json`) tries the community socket first
   and ours second, and stays with the one it reached. When the renderer there
   restarts, its kit apps come to us. While a kit app is connected to us, the
@@ -313,7 +313,9 @@ restarts), which the link replaces.
   listened there for 5 s, the kit app's connection is closed and the kit
   connects again, to the community socket unless a failed try there turned
   it to ours. An app back within 60 s is sent again only after 30 s, then
-  2 min; back a third time, it stays.
+  2 min; back a third time, it stays. Apps using the native `mgu-render/1`
+  dialect keep their connection: another listener's presence does not
+  establish that it supports the input capabilities they negotiated.
 
 **ivi ids.** Our layer apps use layer `0x4d520000 + slot` and surface
 `0x4d520100 + slot` ("MR"); the community renderers use `0x4d470000` and

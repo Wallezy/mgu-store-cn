@@ -65,31 +65,34 @@ int main(void)
     /* first time: sent at once */
     uint32_t uid = 12345;
     CHECK(kit_connected(&k, uid, t) == 0, "a first connection counted as a strike");
-    CHECK(kit_may_send(&k, uid, t), "first time: not sent");
+    CHECK(!kit_may_send(&k, uid, t, 1), "native input client sent to an unverified renderer");
+    CHECK(kit_may_send(&k, uid, t, 0), "first time: legacy app not sent");
     kit_sent(&k, uid, t);
 
     /* back within 60 s: a strike, held 30 s; back again: held 120 s; a third time: never */
     t += 4 * S;
     CHECK(kit_connected(&k, uid, t) == 1, "came back: no strike");
-    CHECK(!kit_may_send(&k, uid, t + 10 * S), "1 strike: sent within the hold");
-    CHECK(kit_may_send(&k, uid, t + KIT_HOLD1_US), "1 strike: not sent after the hold");
+    CHECK(!kit_may_send(&k, uid, t + 10 * S, 0), "1 strike: sent within the hold");
+    CHECK(kit_may_send(&k, uid, t + KIT_HOLD1_US, 0), "1 strike: not sent after the hold");
+    CHECK(!kit_may_send(&k, uid, t + KIT_HOLD1_US, 1), "native client sent after a legacy hold expires");
     t += KIT_HOLD1_US; kit_sent(&k, uid, t);
     t += 4 * S;
     CHECK(kit_connected(&k, uid, t) == 2, "came back twice: not 2 strikes");
-    CHECK(!kit_may_send(&k, uid, t + KIT_HOLD1_US), "2 strikes: sent within the hold");
-    CHECK(kit_may_send(&k, uid, t + KIT_HOLD2_US), "2 strikes: not sent after the hold");
+    CHECK(!kit_may_send(&k, uid, t + KIT_HOLD1_US, 0), "2 strikes: sent within the hold");
+    CHECK(kit_may_send(&k, uid, t + KIT_HOLD2_US, 0), "2 strikes: not sent after the hold");
     t += KIT_HOLD2_US; kit_sent(&k, uid, t);
     t += 4 * S;
     CHECK(kit_connected(&k, uid, t) == KIT_STRIKES, "came back three times: not 3 strikes");
-    CHECK(!kit_may_send(&k, uid, t + 3600 * S), "3 strikes: sent again");
+    CHECK(!kit_may_send(&k, uid, t + 3600 * S, 0), "3 strikes: sent again");
 
     /* away longer than 60 s (its renderer went down much later): a fresh start */
     CHECK(kit_connected(&k, uid, t + KIT_BACK_US + 3600 * S) == 0, "away long: strikes kept");
-    CHECK(kit_may_send(&k, uid, t + KIT_BACK_US + 3600 * S), "away long: not sent");
+    CHECK(kit_may_send(&k, uid, t + KIT_BACK_US + 3600 * S, 0), "away long: not sent");
+    CHECK(!kit_may_send(&k, uid, t + KIT_BACK_US + 3600 * S, 1), "native client sent after its strike history expires");
 
     /* other apps are counted on their own; the table never overflows */
     kit_sent(&k, 1, t);
-    CHECK(kit_may_send(&k, 2, t), "another app held by the first one's strikes");
+    CHECK(kit_may_send(&k, 2, t, 0), "another app held by the first one's strikes");
     for (uint32_t u = 100; u < 100 + 2 * KIT_MAX_APPS; u++) kit_sent(&k, u, t + u);
     CHECK(kit_connected(&k, 100 + 2 * KIT_MAX_APPS - 1, t + 300) == 1, "the newest entry was lost");
 

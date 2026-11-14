@@ -1602,7 +1602,8 @@ static void share_tick(void) {
     }
 }
 
-/* Kit apps on our socket go back to the community socket's own renderer once it listens there steadily (kit.h).
+/* Legacy kit apps go back to the community socket's renderer once it listens steadily (kit.h).
+ * Native clients negotiated this renderer's capabilities and keep their connection.
  * The kernel's table of unix sockets is read only while a kit app is connected here. */
 static void kit_tick(uint64_t t) {
     int any = 0;
@@ -1614,7 +1615,7 @@ static void kit_tick(uint64_t t) {
     if (!kit_steady(&kit, t)) return;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         client *c = clients[i];
-        if (!c || c->kit != 1 || !kit_may_send(&kit, c->uid, t)) continue;
+        if (!c || c->kit != 1 || !kit_may_send(&kit, c->uid, t, c->dialect == DIALECT_NATIVE)) continue;
         log_info("%s: kit app sent back to %s, which has its own renderer again", c->app[0] ? c->app : "client", cfg.shared_path);
         kit_sent(&kit, c->uid, t);
         client_free(c);

@@ -38,8 +38,9 @@ int kit_connected(struct kit *k, uint32_t uid, uint64_t now)
     return 0;
 }
 
-int kit_may_send(const struct kit *k, uint32_t uid, uint64_t now)
+int kit_may_send(const struct kit *k, uint32_t uid, uint64_t now, int native)
 {
+    if (native) return 0;
     int i = find(k, uid);
     if (i < 0) return 1;
     int s = k->app[i].strikes;

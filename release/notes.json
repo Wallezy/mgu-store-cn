@@ -68,13 +68,21 @@
   ],
   "mgu-render": [
     {
+      "version": "0.6.23",
+      "upstreamVersion": "0.6.21",
+      "cnRevision": 2,
+      "changes": [
+        "修复多套渲染服务共存时，交互应用被切回旧服务的问题。"
+      ]
+    },
+    {
       "version": "0.6.22",
+      "upstreamVersion": "0.6.21",
+      "cnRevision": 1,
       "changes": [
         "原厂弹窗出现时，将触控和旋钮交还原厂界面。",
         "改进多指触控和异常触摸恢复。"
-      ],
-      "upstreamVersion": "0.6.21",
-      "cnRevision": 1
+      ]
     }
   ],
   "mgu-uplink": [

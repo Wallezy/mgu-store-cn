@@ -5,7 +5,8 @@
  * when nothing answers there, and stays with whichever it reached. When the renderer there (idrive7-renderd) restarts
  * - every update of it does - its running kit apps come to us and stay. Once the same listener has been at the
  * community socket for KIT_STEADY_US, their connection to us is closed; the kit connects again by itself, to the
- * community socket unless an earlier failed try there turned it to ours. An app that comes back to us within
+ * community socket unless an earlier failed try there turned it to ours. Native mgu-render/1 clients stay
+ * with the renderer that negotiated their input capabilities. An app that comes back to us within
  * KIT_BACK_US is a strike: after one it is sent back again only after KIT_HOLD1_US, after two only after KIT_HOLD2_US,
  * after three not at all while it stays connected.
  */
@@ -35,8 +36,8 @@ void kit_listener(struct kit *k, unsigned long ino, uint64_t now);
 int kit_steady(const struct kit *k, uint64_t now);
 /* A kit app of this uid connected to us; returns its strikes. */
 int kit_connected(struct kit *k, uint32_t uid, uint64_t now);
-/* It may be sent back now (its strikes' hold is over). */
-int kit_may_send(const struct kit *k, uint32_t uid, uint64_t now);
+/* A legacy kit app may be sent back once its hold is over. Native clients stay. */
+int kit_may_send(const struct kit *k, uint32_t uid, uint64_t now, int native);
 void kit_sent(struct kit *k, uint32_t uid, uint64_t now);
 
 #endif
