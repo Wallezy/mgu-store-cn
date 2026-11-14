@@ -202,7 +202,8 @@ module.exports = [
    "Phone over USB": "الهاتف عبر USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -406,7 +407,8 @@ module.exports = [
    "Phone over USB": "Telefon přes USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -610,7 +612,8 @@ module.exports = [
    "Phone over USB": "Telefon via USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -814,7 +817,8 @@ module.exports = [
    "Phone over USB": "Telefon über USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -1018,7 +1022,8 @@ module.exports = [
    "Phone over USB": "Τηλέφωνο μέσω USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -1222,7 +1227,8 @@ module.exports = [
    "Phone over USB": "Teléfono por USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -1426,7 +1432,8 @@ module.exports = [
    "Phone over USB": "Móvil por USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -1630,7 +1637,8 @@ module.exports = [
    "Phone over USB": "Puhelin USB:n kautta",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -1834,7 +1842,8 @@ module.exports = [
    "Phone over USB": "Cellulaire par USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -2038,7 +2047,8 @@ module.exports = [
    "Phone over USB": "Téléphone par USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -2242,7 +2252,8 @@ module.exports = [
    "Phone over USB": "טלפון דרך USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -2446,7 +2457,8 @@ module.exports = [
    "Phone over USB": "Telefon USB-n keresztül",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -2650,7 +2662,8 @@ module.exports = [
    "Phone over USB": "Ponsel lewat USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -2854,7 +2867,8 @@ module.exports = [
    "Phone over USB": "Telefono tramite USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -3058,7 +3072,8 @@ module.exports = [
    "Phone over USB": "USB接続のスマートフォン",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -3262,7 +3277,8 @@ module.exports = [
    "Phone over USB": "USB로 연결한 휴대폰",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -3466,7 +3482,8 @@ module.exports = [
    "Phone over USB": "Telefon via USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -3672,7 +3689,8 @@ module.exports = [
    "Phone over USB": "Telefoon via USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -3876,7 +3894,8 @@ module.exports = [
    "Phone over USB": "Telefon przez USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -4080,7 +4099,8 @@ module.exports = [
    "Phone over USB": "Celular via USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -4284,7 +4304,8 @@ module.exports = [
    "Phone over USB": "Telemóvel por USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -4488,7 +4509,8 @@ module.exports = [
    "Phone over USB": "Telefon prin USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -4692,7 +4714,8 @@ module.exports = [
    "Phone over USB": "Телефон через USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -4896,7 +4919,8 @@ module.exports = [
    "Phone over USB": "Telefón cez USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -5100,7 +5124,8 @@ module.exports = [
    "Phone over USB": "Telefon prek USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -5304,7 +5329,8 @@ module.exports = [
    "Phone over USB": "Telefon via USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -5508,7 +5534,8 @@ module.exports = [
    "Phone over USB": "โทรศัพท์ผ่าน USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -5712,7 +5739,8 @@ module.exports = [
    "Phone over USB": "USB üzerinden telefon",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -5916,7 +5944,8 @@ module.exports = [
    "Phone over USB": "Телефон через USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -6120,7 +6149,8 @@ module.exports = [
    "Phone over USB": "Điện thoại qua USB",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
  },
  {
@@ -6326,7 +6356,8 @@ module.exports = [
    "Phone over USB": "通过 USB 连接手机",
    "What's new": "更新说明",
    "Next version ({0}/{1})": "下一版本（{0}/{1}）",
-   "Upstream {0} · CN revision {1}": "上游 {0} · 国内修订 {1}"
+   "Upstream {0} · CN revision {1}": "上游 {0} · 国内修订 {1}",
+   "The car's Wi-Fi is off": "车载 Wi-Fi 已关闭"
   }
  },
  {
@@ -6532,7 +6563,8 @@ module.exports = [
    "Phone over USB": "透過 USB 使用手機",
    "What's new": "What's new",
    "Next version ({0}/{1})": "Next version ({0}/{1})",
-   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+   "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+   "The car's Wi-Fi is off": "車載 Wi-Fi 已關閉"
   }
  }
 ];

@@ -198,6 +198,7 @@
     "Phone over USB": "Telefon via USB",
     "What's new": "What's new",
     "Next version ({0}/{1})": "Next version ({0}/{1})",
-    "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+    "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+    "The car's Wi-Fi is off": "The car's Wi-Fi is off"
   }
 }

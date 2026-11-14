@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.46
+
+- 加快下载和安装，减少等待。
+- 自动修复应用时保持安全模式。
+
 ## 0.8.44
 
 - 更新目录传递版本说明；手机管理页可展开查看更新内容。
@@ -15,6 +20,18 @@
 - The CN distribution reads its Store and map catalogs over HTTPS while preserving installed source identities. Known official and mirror definitions are normalized in memory; conflicting identities stop source changes instead of guessing.
 - CN catalogs use isolated, definition-bound caches, and an online updater trial requires its own complete CN catalog rather than an unrelated source response.
 - CN runtime disables GitHub sources and accounts without deleting their saved recovery data, and refuses GitHub download hosts through redirects as well.
+## 0.8.45
+
+- An app built by its repository's script has its SDK donor looked up while its files download, and the build uid's processes are killed with the system's `kill` (with Node where there is none, or something of that uid is still running): its build starts and ends sooner.
+
+## 0.8.44
+
+- Only an install asked for (the Store, the phone page) leaves the deploy tool's safe mode. The updater's own repairs (a lost app installed again, a stale tool laid again, updated or installed again, and the rollback of a Store such a repair updated that did not start) keep it.
+
+## 0.8.43
+
+- Installing or updating from a public repository's branch downloads the component's files over a few connections kept open, six at a time, instead of starting a new download for each file. The progress moves as the bytes come.
+
 ## 0.8.42
 
 - The deploy tool's safe mode shows in the state (`safeMode`), and the Store's Leave safe mode (`safe-mode-off`) leaves it. The updater runs in safe mode.

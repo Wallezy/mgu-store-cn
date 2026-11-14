@@ -200,6 +200,7 @@
     "Phone over USB": "透過 USB 使用手機",
     "What's new": "What's new",
     "Next version ({0}/{1})": "Next version ({0}/{1})",
-    "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}"
+    "Upstream {0} · CN revision {1}": "Upstream {0} · CN revision {1}",
+    "The car's Wi-Fi is off": "車載 Wi-Fi 已關閉"
   }
 }

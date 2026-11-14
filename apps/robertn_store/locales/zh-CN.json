@@ -200,6 +200,7 @@
     "Phone over USB": "通过 USB 连接手机",
     "What's new": "更新说明",
     "Next version ({0}/{1})": "下一版本（{0}/{1}）",
-    "Upstream {0} · CN revision {1}": "上游 {0} · 国内修订 {1}"
+    "Upstream {0} · CN revision {1}": "上游 {0} · 国内修订 {1}",
+    "The car's Wi-Fi is off": "车载 Wi-Fi 已关闭"
   }
 }

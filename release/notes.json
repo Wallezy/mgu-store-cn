@@ -1,6 +1,15 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.43",
+      "changes": [
+        "原厂弹窗出现时，触控和旋钮操作更顺畅。",
+        "安全模式下可直接从商店退出。"
+      ],
+      "upstreamVersion": "0.9.40",
+      "cnRevision": 1
+    },
+    {
       "version": "0.9.42",
       "changes": [
         "应用详情新增中文更新说明，可翻看历史版本。",
@@ -20,6 +29,15 @@
   ],
   "mgu-updater": [
     {
+      "version": "0.8.46",
+      "changes": [
+        "加快下载和安装，减少等待。",
+        "自动修复应用时保持安全模式。"
+      ],
+      "upstreamVersion": "0.8.45",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.44",
       "changes": [
         "检查更新时同时获取版本说明。",
@@ -34,6 +52,38 @@
         "支持安全模式，保留国内更新渠道和迁移保护。"
       ],
       "upstreamVersion": "0.8.42",
+      "cnRevision": 1
+    }
+  ],
+  "mgu-deploy": [
+    {
+      "version": "0.8.20",
+      "changes": [
+        "加快安装后的状态检查。",
+        "自动修复和自动回滚时保持安全模式。"
+      ],
+      "upstreamVersion": "0.8.18",
+      "cnRevision": 1
+    }
+  ],
+  "mgu-render": [
+    {
+      "version": "0.6.22",
+      "changes": [
+        "原厂弹窗出现时，将触控和旋钮交还原厂界面。",
+        "改进多指触控和异常触摸恢复。"
+      ],
+      "upstreamVersion": "0.6.21",
+      "cnRevision": 1
+    }
+  ],
+  "mgu-uplink": [
+    {
+      "version": "0.7.13",
+      "changes": [
+        "车载 Wi-Fi 重新开启后，更快恢复联网。"
+      ],
+      "upstreamVersion": "0.7.12",
       "cnRevision": 1
     }
   ]

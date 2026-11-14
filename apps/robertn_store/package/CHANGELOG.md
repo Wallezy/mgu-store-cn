@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.43
+
+- 原厂弹窗出现时，触控和旋钮操作更顺畅。
+- 安全模式下可直接从商店退出。
+
 ## 0.9.42
 
 - 应用详情可查看简洁中文更新说明、历史版本和上游版本对应关系。
@@ -27,6 +32,14 @@ An older updater without that information keeps the ordinary Settings title.
 - The CN distribution requires its migration-aware updater and deploy tool. Its candidate version is separate from the upstream Store while map application localization retains the app versions.
 
 - The CN updater's `github: false` capability hides GitHub accounts, token entry, sign-in and repository discovery in both UI modes. Source entry accepts HTTPS catalogs and the drawn keyboard offers `/catalog.json`. An updater without the capability retains its supported UI.
+No change on screen: the renderer client it carries has multi-touch
+for apps that ask for it.
+
+## 0.9.40
+
+On the drawn screens, Store has Leave safe mode in the deploy tool's
+safe mode, as the widget screens do.
+
 ## 0.9.39
 
 In the deploy tool's safe mode the status line says Safe mode, and Leave

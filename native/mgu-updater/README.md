@@ -278,8 +278,11 @@ commit). Without one: `releases` when the repo has a release, else
   `build.shared` paths and the script) from
   `raw.githubusercontent.com`, gzipped on the way, each checked against its
   git id; a build that fails with only those runs again with the whole
-  repo. A build without `build.shared`, a private repo, or a tree or file
-  that cannot be read downloads the repo tarball at the commit
+  repo. One download process fetches them, six at a time, the largest
+  first, over connections it keeps open, and the progress counts each
+  file's share of their total size as its bytes come. A build without
+  `build.shared`, a private repo, or a tree or file that cannot be read
+  downloads the repo tarball at the commit
   (`/tarball/<sha>`, at most `repo_max_bytes`; links in it are left out).
   While queued installs run, the tree, the files (by git id, up to 64 MB)
   and the last tarball are kept for the next ones, so an Update all reads
@@ -1082,7 +1085,11 @@ each request, and whenever it changes (at most every 250 ms):
 - `safeMode` is the deploy tool's safe mode (`status --json` `safe_mode`,
   deploy/README.md, "Safe mode"): `{ "at", "reason" }` while our tools'
   units stay off, else null (also with a deploy tool that does not report
-  it).
+  it). An install asked for (the Store, the phone page) that goes through
+  leaves it; the updater's own repairs (a lost app installed again from its
+  kept package, a stale tool laid again, updated or installed again from its
+  source, the requirements those install, and the rollback of a Store such a
+  repair updated that did not start) keep it (`--keep-safe-mode`).
 
 Requests: `{"op":"status"}`, `{"op":"check"}`, `{"op":"install","id"}`
 (with its missing requirements first), from any app.

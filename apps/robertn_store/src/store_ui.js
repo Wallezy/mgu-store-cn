@@ -25,7 +25,7 @@ const { t: tr } = require('./i18n.js');
  * each nav, grid and list item, on each filter cell (acts). The acts:
  * { do: 'tab', tab }, { do: 'filter', filter }, { do: 'open', page },
  * { do: 'back' }, { do: 'check' }, { do: 'install', id }, { do: 'update-all' },
- * { do: 'remove', id, tools? }, { do: 'restart' },
+ * { do: 'remove', id, tools? }, { do: 'restart' }, { do: 'safe-mode-off' },
  * { do: 'source-remove', id }, { do: 'account-remove', id }, { do: 'add-source' },
  * { do: 'add-token' }, { do: 'sign-in' }, { do: 'sign-in-cancel' }, { do: 'phone' },
  * { do: 'pick', channel }, { do: 'pick-retry' }, { do: 'pick-add-token' }, { do: 'key', key } (typeKey),
@@ -129,6 +129,15 @@ function restartNow(m, keep) {
         : hidden;
 }
 
+/* Leave safe mode on Store while the deploy tool's safe mode keeps our
+ * tools off and nothing installs (the widget start screen's rule); Restart
+ * now gives it its place meanwhile. */
+function safeModeOff(m) {
+    return m.connected && m.st && m.st.safeMode && !m.st.busy
+        ? button(tr("Leave safe mode"), { do: 'safe-mode-off' }, { vicon: 'unlock', style: 'primary', color: BLUE })
+        : hidden;
+}
+
 /* Why the last restart failed or was refused, beside Restart head unit. */
 function restartFailed(m) {
     const st = m.connected ? m.st : null;
@@ -228,7 +237,8 @@ function storeView(m) {
         filter: { sel: Math.max(0, FILTERS.indexOf(m.filter)), acts: FILTERS.map((f) => ({ do: 'filter', filter: f })) },
         online: { items: !m.connected ? [] : checking ? [{ text: tr("Checking"), color: BLUE, dot: true }]
             : online ? [{ text: tr("Online"), color: GREEN, dot: true }] : [{ text: tr("Offline"), color: AMBER, dot: true }] },
-        restartNow: restartNow(m),
+        safeModeOff: safeModeOff(m),
+        restartNow: safeModeOff(m).hidden ? restartNow(m) : hidden,
         grid: { items: list.map((c) => tile(m, c, busy, name)), empty: m.connected ? tr("Nothing here") : '' }
     };
 }
@@ -712,6 +722,7 @@ function wifiView(m) {
     const nets = wifiNets(w);
     const scanning = scanningOf(w);
     const dbm = typeof w.signal === 'number' ? `${w.signal} dBm` : '';
+    const wifiError = w.error === "the car's Wi-Fi is off" ? tr("The car's Wi-Fi is off") : w.error;
     return {
         subtitle: { text: !w.enabled || w.link === 'unavailable' || w.link === 'failed' ? '' : scanning ? tr("Scanning")
             : pausedLine(w) || plural(nets.length, 'network') },
@@ -720,7 +731,7 @@ function wifiView(m) {
         icon: { vicon: 'wifi', kind: 'service', colors: LIT[s[1]] || '#7a808a,#3a3f47' },
         state: { text: s[0], color: s[1] },
         info: { text: [w.ip && `IP ${w.ip}`, dbm].filter(Boolean).join(' · ') },
-        note: { text: String(m.uplinkNote || w.error || bandNote(w)).slice(0, 160) },
+        note: { text: String(m.uplinkNote || wifiError || bandNote(w)).slice(0, 160) },
         // Allow 5 GHz, with an uplink that has it (mgu-uplink 0.7.6's wifi.allow5ghz)
         allow5: { items: !waiting && w.enabled && typeof w.allow5ghz === 'boolean' ? [{ id: 'allow5', title: tr("Allow 5 GHz"), sub: tr("May cause CarPlay issues"), subColor: DIM, plain: true,
             vicon: 'wifi', iconColor: 'text', right: `toggle:${w.allow5ghz ? 'on' : 'off'}`, act: { do: 'wifi-5ghz' } }] : [] },
