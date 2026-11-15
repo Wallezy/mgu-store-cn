@@ -57,6 +57,15 @@
   ],
   "mgu-deploy": [
     {
+      "version": "0.8.21",
+      "changes": [
+        "支持 MainApp 6.4.8 的安装与更新。",
+        "保留国内来源及恢复保护。"
+      ],
+      "upstreamVersion": "0.8.19",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.20",
       "changes": [
         "加快安装后的状态检查。",
@@ -92,6 +101,16 @@
         "车载 Wi-Fi 重新开启后，更快恢复联网。"
       ],
       "upstreamVersion": "0.7.12",
+      "cnRevision": 1
+    }
+  ],
+  "app-privacy": [
+    {
+      "version": "1.7.2",
+      "changes": [
+        "支持 MainApp 6.4.8 的应用保护。"
+      ],
+      "upstreamVersion": "1.7.2",
       "cnRevision": 1
     }
   ]
