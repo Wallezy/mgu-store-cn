@@ -959,6 +959,16 @@ test('check-apps passes a marked clean app', () => withRoot((root) => {
     assert.strictEqual(runTool(['check-apps', path.join(root, 'apps')]).code, 0);
 }));
 
+test('check-apps reads the canonical package tree', () => withRoot((root) => {
+    stage(root, 'sample', { mguLocalOnly: true });
+    const app = path.join(root, 'apps', 'sample');
+    const staged = fs.readdirSync(app).filter((n) => n.indexOf('@') >= 0)[0];
+    fs.renameSync(path.join(app, staged), path.join(app, 'package'));
+    assert.strictEqual(runTool(['check-apps', path.join(root, 'apps')]).code, 0);
+    fs.writeFileSync(path.join(app, 'package', 'package.json'), JSON.stringify({}));
+    assert.strictEqual(runTool(['check-apps', path.join(root, 'apps')]).code, 1);
+}));
+
 test('check-apps fails an unmarked app', () => withRoot((root) => {
     stage(root, 'sample', {});
     const r = runTool(['check-apps', path.join(root, 'apps')]);

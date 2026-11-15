@@ -1275,7 +1275,7 @@ function checkApps(appsDirs, log) {
             }
             fs.readdirSync(appDir).sort().forEach((name) => {
                 const staged = path.join(appDir, name);
-                if (name.indexOf('@') < 0 || !fs.statSync(staged).isDirectory()) {
+                if ((name !== 'package' && name.indexOf('@') < 0) || !fs.statSync(staged).isDirectory()) {
                     return;
                 }
                 checked += 1;
