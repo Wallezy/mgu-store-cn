@@ -1796,6 +1796,21 @@ function testFallback() {
     check('in-place hook: the controller\'s appManager is the installer, without a controller (6.5.5) appManager itself',
         hookStub(path.join(HERE, 'fixtures', 'main_queue.js')) === 'mgr&&mgr.appManager' &&
         hookStub(path.join(HERE, 'fixtures', 'main.js')) === 'mgr&&(mgr.appManager||mgr)');
+    // MainApp 6.4.8 waits for both MainApp and the bookmark controller.
+    const stock648 = stockMain().replace(INPLACE_ANCHOR,
+        'Promise.all([mainApp.init(),bookmarkController.init()])}).then(()=>{');
+    const boot648 = fakeRoot({ main: '// bytecode-loader stub\n' });
+    write(boot648.p('usr/lib/oap-mainapp/src/main.bundle.js'), stock648);
+    const fb648 = boot648.run(['fallback', 'on', '--yes']);
+    check('MainApp 6.4.8: bundle fallback includes the in-place hook', fb648.status === 0 &&
+        fs.readFileSync(boot648.p('var/opt/mgu-deploy/main.js'), 'utf8').includes('/* mgu-deploy in-place install */'), fb648.out);
+    check('MainApp 6.4.8: the hook uses the direct app manager',
+        hookStub(boot648.p('usr/lib/oap-mainapp/src/main.bundle.js')) === 'mgr&&(mgr.appManager||mgr)');
+    const ambiguous = fakeRoot({ main: stock648 + '\n// ' + INPLACE_ANCHOR });
+    const ambiguousResult = ambiguous.run(['fallback', 'on', '--yes']);
+    check('MainApp: mixed initialization anchors omit the optional hook', ambiguousResult.status === 0 &&
+        !fs.readFileSync(ambiguous.p('var/opt/mgu-deploy/main.js'), 'utf8').includes('/* mgu-deploy in-place install */') &&
+        ambiguousResult.out.includes('the copy has no hook'), ambiguousResult.out);
     const mounts655 = boot655.p('mounts.log');
     const cmd655 = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback.service'), 'utf8')
         .match(/^ExecStart=\/bin\/sh -c '(.*)'$/m)[1]

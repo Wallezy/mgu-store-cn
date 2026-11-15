@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 支持 MainApp 6.4.8 的原位安装与更新，保留国内来源和恢复保护。
+
 ## 0.8.20
 
 - 加快安装后的状态检查。
@@ -20,6 +22,10 @@
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+## 0.8.19
+
+- iDrive 7 with MainApp 6.4.8: the provisioning fallback copy carries the in-place install hook, at its start-up's `Promise.all([mainApp.init(),bookmarkController.init()])`, so an app install or update restarts only that app instead of the app manager.
+
 ## 0.8.18
 
 - `status` asks systemctl about all tools' units in one run per question and reads the process list once, so the status after each install or update takes about a second less.
