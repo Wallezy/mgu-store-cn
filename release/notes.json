@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.44",
+      "changes": [
+        "提高中文应用名称清晰度。"
+      ],
+      "upstreamVersion": "0.9.40",
+      "cnRevision": 2
+    },
+    {
       "version": "0.9.43",
       "changes": [
         "原厂弹窗出现时，触控和旋钮操作更顺畅。",
@@ -76,6 +84,14 @@
     }
   ],
   "mgu-render": [
+    {
+      "version": "0.6.24",
+      "changes": [
+        "修复多个中文应用打开后文字缺失和空白页。"
+      ],
+      "upstreamVersion": "0.6.21",
+      "cnRevision": 3
+    },
     {
       "version": "0.6.23",
       "changes": [

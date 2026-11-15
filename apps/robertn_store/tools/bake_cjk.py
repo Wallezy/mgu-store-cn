@@ -113,10 +113,18 @@ def main():
         if hashlib.sha256(f.read()).hexdigest() != sha256:
             sys.exit('not the pinned %s (SHA-256 %s)' % (ttf, sha256))
     ui = locale_text(sys.argv[1])
+    titles = ''
+    if sys.argv[1] == 'chinese':
+        with open(os.path.join(HERE, 'catalog-titles.zh-CN.json'), encoding='utf-8') as f:
+            titles = ''.join(json.load(f).values())
+        ui += titles
     base = bake_fonts.TEXT
     sizes = [atlas(family, sys.argv[2], 'ui', 40, ui)]
     bake_fonts.TEXT = base
     sizes.append(atlas(family, sys.argv[2], 'common', common_size, common() + ui))
+    if titles:
+        bake_fonts.TEXT = base
+        sizes.append(atlas(family, sys.argv[2], 'titles', 64, titles))
     face = {'family': family, 'sizes': sizes}
     out = os.path.join(FONT_DIR, '%s.json' % sys.argv[1])
     with open(out, 'w', encoding='utf-8', newline='\n') as o:

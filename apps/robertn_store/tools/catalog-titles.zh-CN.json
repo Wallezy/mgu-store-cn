@@ -1,0 +1,19 @@
+{
+  "cluster-render": "仪表盘与 HUD 渲染器",
+  "robertn_waze_cluster": "Waze 仪表盘显示",
+  "waze-on-cluster": "Waze 地图投屏服务",
+  "brake_test": "制动测试",
+  "car_vitals": "M 车辆仪表",
+  "doom": "毁灭战士",
+  "draggy": "弹射模式",
+  "dtc_scanner": "故障检测",
+  "dyno": "虚拟马力机",
+  "edrive": "EDrive助手",
+  "gforce": "G 值仪表",
+  "redline": "换挡转速",
+  "service": "保养信息",
+  "warmup": "暖机助手",
+  "ambient_config": "氛围灯设置",
+  "cluster_themes": "仪表主题 (Cluster Themes)",
+  "zf8hp": "ZF 8HP 变速箱监测"
+}

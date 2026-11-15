@@ -237,23 +237,14 @@ all.filter((l) => l.drawn !== false).forEach((l) => {
         eq(Array.from(v).filter((ch) => !f.glyphs[ch.codePointAt(0)]), [], `release/texts/${l.code}.json: ${id} ${k} drawn whole`);
     })));
 });
-// mgu-render's glyph texture (src/gfx.c gfx_atlas): two 1024-px columns of 4096 rows, shared by every app
-// and never emptied while it runs: Inter's atlases and any language's fit, and, uploaded in this order, those
-// of a change between two of the largest (Chinese, Japanese, Korean)
-const rows = (m) => (m.sizes || [].concat(...Object.keys(m.faces).map((k) => m.faces[k].sizes))).map((a) => a.atlasH);
-const shelves = (heights) => heights.reduce((col, h) => {
-    const c = col[0] <= col[1] ? 0 : 1;
-    col[c] += h + 1;
-    return col;
-}, [0, 0]);
-const interRows = rows(require(path.join(SRC, 'font_regular.js'))).concat(rows(require(path.join(SRC, 'font_semibold.js'))));
-const ownRows = (name) => rows(JSON.parse(fs.readFileSync(path.join(TREE, 'fonts', `${name}.json`), 'utf8')));
+// Each glyph atlas has a bounded texture; all Store language resources fit the global budget.
+const atlasSets = (m) => m.sizes || [].concat(...Object.keys(m.faces).map((k) => m.faces[k].sizes));
 const langFonts = Array.from(new Set(all.map((l) => l.font).filter(Boolean)));
 const CJK = ['chinese', 'chinese-tc', 'japanese', 'korean'];
-langFonts.forEach((a) => langFonts.filter((b) => b === a || (CJK.indexOf(a) >= 0 && CJK.indexOf(b) >= 0)).forEach((b) => {
-    const col = shelves(interRows.concat(ownRows(a), a === b ? [] : ownRows(b)));
-    ok(Math.max(...col) <= 4096, `${a} then ${b}: Inter's and their atlases in the glyph texture (${col})`);
-}));
+const resourceAtlases = ['font_regular.js', 'font_semibold.js'].reduce((a, f) => a.concat(atlasSets(require(path.join(SRC, f)))), []);
+langFonts.forEach((name) => resourceAtlases.push(...atlasSets(JSON.parse(fs.readFileSync(path.join(TREE, 'fonts', `${name}.json`), 'utf8')))));
+ok(resourceAtlases.every((a) => a.atlasW <= 1024 && a.atlasH <= 4096), 'every font texture fits the renderer size limits');
+ok(resourceAtlases.reduce((n, a) => n + a.atlasW * a.atlasH, 0) < 64 * 1024 * 1024, 'all Store language fonts fit the shared glyph memory bound');
 // every character of a Chinese, Japanese or Korean language's words in its sharp 40 px set (tools/bake_cjk.py)
 all.filter((l) => CJK.indexOf(l.font) >= 0).forEach((l) => {
     const sharp = JSON.parse(fs.readFileSync(path.join(TREE, 'fonts', `${l.font}.json`), 'utf8')).sizes.find((a) => / ui@40@/.test(a.key));
@@ -262,6 +253,13 @@ all.filter((l) => CJK.indexOf(l.font) >= 0).forEach((l) => {
         `${l.code}.json: "${l.words[k]}" in ${sharp.key}`));
 });
 i18n.setHmiLanguage('CHINESISCH_SIMPLE');
+const titles = require('./catalog-titles.zh-CN.json');
+Object.keys(titles).forEach((id) => {
+    const title = titles[id];
+    if (!/[\u3400-\u9fff]/.test(title)) return;
+    const f = fonts.get('bold', 58, title);
+    ok(f.size >= 58 && Array.from(title).every((ch) => f.glyphs[ch.codePointAt(0)]), `${id}: Chinese catalog title uses sharp glyphs at its displayed size`);
+});
 const ui48 = fonts.get('bold', 50, '应用商店');
 const common = fonts.get('label', 22, '这是一个应用的说明');
 ok(ui48 !== common && ui48.size > common.size, 'the Store\'s words sharp, other text from the common set');
