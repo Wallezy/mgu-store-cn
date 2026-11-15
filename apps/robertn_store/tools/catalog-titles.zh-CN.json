@@ -15,5 +15,8 @@
   "warmup": "暖机助手",
   "ambient_config": "氛围灯设置",
   "cluster_themes": "仪表主题 (Cluster Themes)",
-  "zf8hp": "ZF 8HP 变速箱监测"
+  "zf8hp": "ZF 8HP 变速箱监测",
+  "live_data": "实时数据",
+  "live_adjustments": "发动机设置",
+  "mgu-inputgate": "旋钮输入支持"
 }

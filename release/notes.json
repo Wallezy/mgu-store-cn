@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.45",
+      "upstreamVersion": "0.9.40",
+      "cnRevision": 3,
+      "changes": [
+        "补齐新应用名称的大字号中文字库，提升标题清晰度。"
+      ]
+    },
+    {
       "version": "0.9.44",
       "changes": [
         "提高中文应用名称清晰度。"
