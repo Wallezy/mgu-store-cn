@@ -57,6 +57,7 @@ int main(void) {
     for (int i = 0; i < 4; i++) good &= !gfx_atlas(&clients[i], 100 + i, 1024, 3000, large);
     CHECK(good, "four concurrent large CJK fonts exceed the old shared shelf without losing text");
     for (int i = 0; i < 4; i++) gfx_client_free(&clients[i]);
+    CHECK(!gfx_atlas(&a, 1, 16, 16, white), "keep another app's font alive during repeated launches");
     good = 1;
     for (int i = 0; i < 200; i++) {
         gfx_client c = {0};
@@ -64,6 +65,7 @@ int main(void) {
         gfx_client_free(&c);
     }
     CHECK(good, "200 app launches reclaim glyph textures instead of filling a permanent cache");
+    gfx_client_free(&a);
     gfx_client full = {0}, shared = {0};
     good = 1;
     for (int i = 0; i < 16; i++) good &= !gfx_atlas(&full, 2000 + i, 1024, 4096, large);
