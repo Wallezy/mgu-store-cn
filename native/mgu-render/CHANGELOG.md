@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.26 (CN)
+
+- 修复偶发渲染错误后中文文字无法显示的问题。
+
 ## 0.6.25
 
 同步旋钮分项接管兼容协议，完善退出与异常恢复。 保留现有输入方式和中文显示修复。
@@ -19,6 +23,11 @@
 
 - 原厂弹窗出现时，将触控和旋钮交还原厂界面。
 - 改进多指触控和异常触摸恢复。
+## 0.6.23
+
+- Text stays drawn when several apps with large fonts (Chinese, Japanese, Korean) are open or opened one after another:
+  an app's glyphs are freed when it closes.
+
 ## 0.6.22
 
 - An app can hold only some parts of the iDrive controller: X_GRAB's second word (1 knob, 2 press, 4 tilt; 0 or left

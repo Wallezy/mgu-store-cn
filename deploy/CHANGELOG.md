@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.22 (CN)
+
+- 改善部分 iDrive 8 应用配置异常时的安装兼容性。
+
 ## 0.8.21
 
 - 支持 MainApp 6.4.8 的原位安装与更新，保留国内来源和恢复保护。
@@ -24,6 +28,10 @@
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+## 0.8.20
+
+- iDrive 8: when an install collects the appletIds in use, an installed app whose `rhmiData/application.json` is empty is passed over with a warning naming the file (it declares no appletId), and one that does not parse is kept clear of each `"appletId": <n>` in its text, warning. Neither fails the install with "cannot read … for the appletIds in use".
+
 ## 0.8.19
 
 - iDrive 7 with MainApp 6.4.8: the provisioning fallback copy carries the in-place install hook, at its start-up's `Promise.all([mainApp.init(),bookmarkController.init()])`, so an app install or update restarts only that app instead of the app manager.

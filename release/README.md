@@ -197,22 +197,10 @@ the app is not installed. The updater checks
 `size` and `sha256` before anything is installed. The catalog is not
 signed: the unit trusts a source over HTTPS.
 
-Schema 2 adds, per entry:
-
-- `build: "unit"`: the artifact is a source package (`mgu-app.json` at its
-  root), which the deploy tool builds on the unit (deploy/README.md,
-  "Source packages"). Absent: a ready OAP tgz or tool kit.
-- `requires: { "<id>": "<min version>" }`: installed (or updated) first.
-  The Store requires the deploy tool that builds source packages.
-- `optional: true`: listed, never offered as an update unless installed
-  (`mgu-uplink`).
-- `uninstallable: true`: the Store may offer Remove. The Store's own
-  tools have none: the updater never removes them.
-- `mguHmi: ["ID7"|"ID8", ...]`: the head units it is for; the Store
-  refuses it on another (docs/PUBLISHING.md). `robertn_store`: `["ID7"]`.
-- `mguProvides: "<capability>"`: the capability a tool provides
-  (`renderer`); a requirement on such a tool is also met by another
-  installed provider, and providers install side by side.
+The other fields (`build`, `requires`, `optional`, `uninstallable`,
+`mguHmi`, `mguProvides`) are described in docs/PUBLISHING.md, "2. Catalog".
+The Store's own tools are not `uninstallable`: the updater never removes
+them.
 
 ## Publishing
 
@@ -252,7 +240,7 @@ rest is published. Nothing is published when the resulting catalog would list a 
 whose requirements it doesn't hold at that version or newer, so a car can
 always install a component's requirements first.
 An interrupted run can be run again: a release left behind is completed,
-its asset checked against the new artifact's sha256. For a test unit,
+its asset checked against the new artifact's sha256.
 `MGU_PUBLISH=dir:release/published` (git-ignored) writes a local catalog.
 
 The entries of the published catalog carry over into the next one;

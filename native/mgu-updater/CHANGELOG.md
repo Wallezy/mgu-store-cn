@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.47 (CN)
+
+- 修复 U 盘包含较多其他文件时应用无法安装的问题。
+
 ## 0.8.46
 
 - 加快下载和安装，减少等待。
@@ -20,6 +24,8 @@
 - The CN distribution reads its Store and map catalogs over HTTPS while preserving installed source identities. Known official and mirror definitions are normalized in memory; conflicting identities stop source changes instead of guessing.
 - CN catalogs use isolated, definition-bound caches, and an online updater trial requires its own complete CN catalog rather than an unrelated source response.
 - CN runtime disables GitHub sources and accounts without deleting their saved recovery data, and refuses GitHub download hosts through redirects as well.
+- An app built by its repository's script installs from a stick that holds more than the checkout: when the stick holds more than 200 MB or 20000 files, the build gets the app's folder, its shared files and the script. A folder too big to read says which folder, and whether bytes or files are over the limit.
+
 ## 0.8.45
 
 - An app built by its repository's script has its SDK donor looked up while its files download, and the build uid's processes are killed with the system's `kill` (with Node where there is none, or something of that uid is still running): its build starts and ends sooner.

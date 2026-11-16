@@ -53,6 +53,14 @@
   ],
   "mgu-updater": [
     {
+      "version": "0.8.47",
+      "changes": [
+        "修复 U 盘包含较多其他文件时应用无法安装的问题。"
+      ],
+      "upstreamVersion": "0.8.46",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.46",
       "changes": [
         "加快下载和安装，减少等待。",
@@ -81,6 +89,14 @@
   ],
   "mgu-deploy": [
     {
+      "version": "0.8.22",
+      "changes": [
+        "改善部分 iDrive 8 应用配置异常时的安装兼容性。"
+      ],
+      "upstreamVersion": "0.8.20",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.21",
       "changes": [
         "支持 MainApp 6.4.8 的安装与更新。",
@@ -100,6 +116,14 @@
     }
   ],
   "mgu-render": [
+    {
+      "version": "0.6.26",
+      "changes": [
+        "修复偶发渲染错误后中文文字无法显示的问题。"
+      ],
+      "upstreamVersion": "0.6.23",
+      "cnRevision": 1
+    },
     {
       "version": "0.6.25",
       "changes": [
