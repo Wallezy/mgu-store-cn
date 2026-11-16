@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.6.25
+
+同步旋钮分项接管兼容协议，完善退出与异常恢复。 保留现有输入方式和中文显示修复。
+
+
 ## 0.6.24
 
 - 修复多个中文应用打开后文字缺失、字体纹理耗尽的问题。
@@ -14,6 +19,12 @@
 
 - 原厂弹窗出现时，将触控和旋钮交还原厂界面。
 - 改进多指触控和异常触摸恢复。
+## 0.6.22
+
+- An app can hold only some parts of the iDrive controller: X_GRAB's second word (1 knob, 2 press, 4 tilt; 0 or left
+  out: all three), `grab(on, 'knob')` or `grab(on, ['knob', 'press'])` in the JS client. Where the HMI's gate reads the
+  parts (X_READY caps 128, `info.controllerHold`), the others stay the HMI's: a tilt still leaves an app that holds the
+  knob and the press. Every other gate holds all three, as before.
 
 ## 0.6.21
 

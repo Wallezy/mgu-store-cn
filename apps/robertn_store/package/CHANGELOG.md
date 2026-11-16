@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.46
+
+更新界面渲染客户端，兼容新版旋钮控制协议。
+
+
 ## 0.9.45
 
 补齐实时数据、发动机设置和旋钮输入支持的中文标题字库。
@@ -41,7 +46,8 @@ An older updater without that information keeps the ordinary Settings title.
 
 - The CN updater's `github: false` capability hides GitHub accounts, token entry, sign-in and repository discovery in both UI modes. Source entry accepts HTTPS catalogs and the drawn keyboard offers `/catalog.json`. An updater without the capability retains its supported UI.
 No change on screen: the renderer client it carries has multi-touch
-for apps that ask for it.
+for apps that ask for it, and can hold only some parts of the
+controller.
 
 ## 0.9.40
 

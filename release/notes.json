@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.46",
+      "changes": [
+        "更新界面渲染客户端，兼容新版旋钮控制协议。"
+      ],
+      "upstreamVersion": "0.9.40",
+      "cnRevision": 4
+    },
+    {
       "version": "0.9.45",
       "changes": [
         "补齐新应用名称的大字号中文字库，提升标题清晰度。"
@@ -92,6 +100,15 @@
     }
   ],
   "mgu-render": [
+    {
+      "version": "0.6.25",
+      "changes": [
+        "同步旋钮分项接管兼容协议，完善退出与异常恢复。",
+        "保留现有输入方式和中文显示修复。"
+      ],
+      "upstreamVersion": "0.6.22",
+      "cnRevision": 1
+    },
     {
       "version": "0.6.24",
       "changes": [
