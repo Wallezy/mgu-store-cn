@@ -9,6 +9,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import time
 import urllib.parse
 
 import prepare_cn as P
@@ -18,6 +19,11 @@ DESTINATIONS = {"stable": "oss://walle-mgu/mgu/cn/",
                 "beta": "oss://walle-mgu/mgu/cn/beta/"}
 REQUIRED_CI = {"mgu-store": ("CN source checks", "CN installer checks"),
                "idrive-apps": ("CN source checks", "Test")}
+# A paired-channel publication can reuse only successful GitHub responses this
+# process itself fetched and validated. No file/CLI-supplied CI assertions are
+# accepted. Every repository, full commit and workflow set has a separate key.
+_CI_RESPONSES = {}
+CI_RESPONSE_MAX_AGE = 3600
 
 class ConcurrentPublication(RuntimeError):
     pass
@@ -74,8 +80,14 @@ def check_ci(manifest, work):
         file = work / (repo + "-ci.json")
         url = ("https://api.github.com/repos/" + P.REPOS[repo] +
                "/actions/runs?head_sha=" + record["commit"] + "&per_page=100")
-        if download(url, file) is None:
-            raise ValueError("CI evidence unavailable: " + repo)
+        key = (P.REPOS[repo], record["commit"], tuple(names))
+        cached = _CI_RESPONSES.get(key)
+        reused = cached is not None and 0 <= time.monotonic() - cached[0] < CI_RESPONSE_MAX_AGE
+        if reused:
+            P.write_json(file, cached[1])
+        else:
+            if download(url, file) is None:
+                raise ValueError("CI evidence unavailable: " + repo)
         runs = P.read_json(file).get("workflow_runs", [])
         accepted = []
         for name in names:
@@ -85,6 +97,8 @@ def check_ci(manifest, work):
                 raise ValueError("Exact-commit CI is not successful: " + repo + " / " + name)
             accepted.append({k: newest[k] for k in ("id", "name", "head_sha", "html_url")})
         evidence[repo] = accepted
+        if not reused:
+            _CI_RESPONSES[key] = (time.monotonic(), P.read_json(file))
     return evidence
 
 

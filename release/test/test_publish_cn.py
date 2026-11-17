@@ -50,6 +50,42 @@ class FakeRemote:
 
 
 class PublicationTests(F.PreparationTests):
+    def setUp(self):
+        super().setUp()
+        U._CI_RESPONSES.clear()
+
+    def test_paired_ci_reuses_only_live_success_for_same_commit_within_one_process(self):
+        manifest = {"repositories": {repo: {"commit": "a" * 40} for repo in U.REQUIRED_CI}}
+        calls = []
+        failing = [False]
+        def download(url, file):
+            calls.append(url)
+            repo = "mgu-store" if "mgu-store-cn" in url else "idrive-apps"
+            sha = url.split("head_sha=")[1].split("&")[0]
+            P.write_json(file, {"workflow_runs": [
+                {"id": i, "name": name, "head_sha": sha, "html_url": "https://github.com/fixture",
+                 "status": "completed", "conclusion": "failure" if failing[0] else "success"}
+                for i, name in enumerate(U.REQUIRED_CI[repo], 1)]})
+            return {}
+        with mock.patch.object(U, "download", side_effect=download), mock.patch.object(U.time, "monotonic", return_value=100) as clock:
+            U.check_ci(manifest, self.root)
+            self.assertEqual(len(calls), 2)
+            U.check_ci(manifest, self.root)
+            self.assertEqual(len(calls), 2)
+            manifest["repositories"]["idrive-apps"]["commit"] = "b" * 40
+            failing[0] = True
+            with self.assertRaisesRegex(ValueError, "CI is not successful"):
+                U.check_ci(manifest, self.root)
+            with self.assertRaisesRegex(ValueError, "CI is not successful"):
+                U.check_ci(manifest, self.root)
+            self.assertEqual(len(calls), 4, "a failure must never enter the response cache")
+            failing[0] = False
+            U.check_ci(manifest, self.root)
+            self.assertEqual(len(calls), 5)
+            clock.return_value = 100 + U.CI_RESPONSE_MAX_AGE
+            U.check_ci(manifest, self.root)
+            self.assertEqual(len(calls), 7, "expiry must fetch fresh GitHub evidence")
+
     def test_publication_checks_beta_only_pin_and_keeps_it_out_of_stable(self):
         beta, candidate, base, review, record = beta_only_fixture(self)
         target = self.root / "extra-app-publication"
