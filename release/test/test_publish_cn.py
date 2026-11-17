@@ -347,6 +347,27 @@ class PublicationTests(F.PreparationTests):
             self.assertEqual(len(run.call_args_list), 2)
             self.assertTrue(all(call.kwargs["cwd"] == work for call in run.call_args_list))
 
+    def test_large_public_packages_allow_slow_progress_without_relaxing_checks(self):
+        output = self.root / "download" / "package.tgz"
+        def transfer(command, **kwargs):
+            output.with_name(output.name + ".headers").write_text("Cache-Control: public\n")
+            return mock.Mock(returncode=0, stdout="200")
+        for path, seconds in (("catalog.json", 180), ("packages/abc/tool.tgz", 1800)):
+            with mock.patch.object(U.subprocess, "run", side_effect=transfer) as run:
+                self.assertEqual(U.download("https://mgu.walle.pw/mgu/cn/" + path, output),
+                                 {"cache-control": "public"})
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index("--max-time") + 1], str(seconds))
+                self.assertEqual(command[command.index("--max-filesize") + 1], str(P.MAX_FILE))
+                self.assertEqual(command[command.index("--proto") + 1], "=https")
+                self.assertEqual(command[command.index("--speed-limit") + 1], "1024")
+        with mock.patch.object(U.subprocess, "run", return_value=mock.Mock(returncode=28, stdout="200")):
+            with self.assertRaisesRegex(RuntimeError, "HTTPS request failed"):
+                U.download("https://mgu.walle.pw/mgu/cn/packages/abc/tool.tgz", output)
+        with mock.patch.object(U.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="403")):
+            with self.assertRaisesRegex(RuntimeError, "HTTPS status 403"):
+                U.download("https://mgu.walle.pw/mgu/cn/packages/abc/tool.tgz", output)
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(PublicationTests(name) for name in PublicationTests.__dict__

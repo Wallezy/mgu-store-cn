@@ -47,11 +47,16 @@ def download(url, output):
     """Only public HTTPS; callers never pass signed or authenticated URLs."""
     output.parent.mkdir(parents=True, exist_ok=True)
     headers = output.with_name(output.name + ".headers")
+    # The catalog now includes optional browser/Steam runtimes up to 512 MiB.
+    # Keep metadata requests short; allow slow but progressing public package
+    # transfers while still enforcing MAX_FILE and the caller's full SHA-256.
+    transfer_timeout = 1800 if "/packages/" in urllib.parse.urlsplit(url).path else 180
     p = subprocess.run(["curl", "--silent", "--show-error", "--proto", "=https",
-                        "--connect-timeout", "15", "--max-time", "180",
+                        "--connect-timeout", "15", "--max-time", str(transfer_timeout),
+                        "--speed-time", "60", "--speed-limit", "1024",
                         "--max-filesize", str(P.MAX_FILE), "--dump-header", str(headers),
                         "--output", str(output), "--write-out", "%{http_code}", url],
-                       capture_output=True, text=True, timeout=190)
+                       capture_output=True, text=True, timeout=transfer_timeout + 10)
     if p.returncode:
         raise RuntimeError("Public HTTPS request failed: " + urllib.parse.urlsplit(url).path)
     if p.stdout.strip() == "404":
