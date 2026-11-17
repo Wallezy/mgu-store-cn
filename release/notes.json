@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.47",
+      "upstreamVersion": "0.9.40",
+      "cnRevision": 5,
+      "changes": [
+        "补齐新增应用的大字号中文标题，避免缺字和模糊。"
+      ]
+    },
+    {
       "version": "0.9.46",
       "changes": [
         "更新界面渲染客户端，兼容新版旋钮控制协议。"
