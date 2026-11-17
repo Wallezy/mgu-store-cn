@@ -125,6 +125,19 @@ evidence or operating a car.
 
 ## Explicit owner-reviewed improvements
 
+When Beta contains a new trial app that has never been in Stable, an
+owner-reviewed promotion can declare `beta_only_components` as repository →
+component ID → SHA-256 of the entire reviewed Beta catalog entry. The separate
+Stable candidate must exclude exactly those entries, which must also be absent
+from the previous Stable catalog. All remaining entries must match Beta or an
+explicitly reviewed retained/variant entry. Dependency validation still applies:
+a shared Stable app cannot require an excluded Beta-only component.
+
+The publisher checks the immutable public Beta proof, current Beta catalog and
+exact previous Stable snapshot before writing. This selection cannot remove an
+existing Stable component, accept changed Beta metadata, or promote a different
+shared package. It does not claim a vehicle test.
+
 An owner may explicitly authorize a small improvement for both channels without
 a vehicle trial. `owner-reviewed` records that authorization, source checks,
 code review and reproducible builds; it never claims vehicle validation.

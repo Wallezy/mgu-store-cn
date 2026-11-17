@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 import publish_cn as U
 import test_prepare_cn as F
-from test_promote_cn import component_fixture, variant_fixture
+from test_promote_cn import component_fixture, variant_fixture, beta_only_fixture
 
 P = F.M
 
@@ -50,6 +50,38 @@ class FakeRemote:
 
 
 class PublicationTests(F.PreparationTests):
+    def test_publication_checks_beta_only_pin_and_keeps_it_out_of_stable(self):
+        beta, candidate, base, review, record = beta_only_fixture(self)
+        target = self.root / "extra-app-publication"
+        U.C.promote(beta, review, target, base, candidate)
+        self.output = target
+        remote = FakeRemote()
+        remote.channel = "stable"
+        for item in U.C.snapshot(base)["files"] + [{"path": "cn-manifest.json"}]:
+            remote.objects[item["path"]] = (base / item["path"]).read_bytes()
+
+        def download(url, file):
+            rel = url.removeprefix(P.BASES["beta"])
+            source = beta / ("cn-manifest.json" if rel.startswith("candidates/") else rel)
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(source.read_bytes())
+            return {}
+
+        manifest_path = target / "cn-manifest.json"
+        good = manifest_path.read_bytes()
+        bad = P.read_json(manifest_path)
+        bad["validation"]["beta_only_components"]["idrive-apps"]["cluster_metrics"] = "f" * 64
+        P.write_json(manifest_path, bad)
+        with mock.patch.object(U, "download", side_effect=download):
+            with self.assertRaisesRegex(ValueError, "Beta-only"):
+                self.execute(remote, "wrong-beta-pin")
+            self.assertFalse(remote.writes)
+            manifest_path.write_bytes(good)
+            result = self.execute(remote, "accepted-beta-exclusion")
+        self.assertTrue(result["public_verified"])
+        self.assertFalse(any("cluster_metrics" in p for p in remote.writes))
+        self.assertTrue(any("ambient_config@" in p for p in remote.writes))
+
     def test_publication_checks_channel_variant_metadata_before_writing(self):
         beta, candidate, base, review, record = variant_fixture(self)
         target = self.root / "variant-publication"

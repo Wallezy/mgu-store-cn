@@ -86,7 +86,67 @@ def variant_fixture(case):
     return outputs["beta"], outputs["stable"], base, review, record
 
 
+def beta_only_fixture(case):
+    _, candidate, base, review, record = component_fixture(case)
+    case.add_component("idrive-apps", "cluster_metrics", "app")
+    case.write_evidence()
+    beta = case.root / "beta-with-extra-app"
+    M.prepare(case.dirs["mgu-store"], case.dirs["idrive-apps"],
+              case.sources["mgu-store"], case.sources["idrive-apps"],
+              case.bootstrap, case.validation, beta, channel="beta")
+    entry = next(c for c in M.read_json(beta / "idrive-apps/catalog.json")["components"]
+                 if c["id"] == "cluster_metrics")
+    record.update(snapshot_sha256=M.digest(beta / "cn-manifest.json"),
+                  beta_only_components={"idrive-apps": {"cluster_metrics": C.component_digest(entry)}})
+    M.write_json(review, record)
+    return beta, candidate, base, review, record
+
+
 class PromotionTests(PreparationTests):
+    def test_new_beta_only_app_is_excluded_without_changing_shared_apps(self):
+        beta, candidate, base, review, record = beta_only_fixture(self)
+        target = self.root / "without-beta-only"
+        promoted = C.promote(beta, review, target, base, candidate)
+        self.assertTrue(C.owner_reviewed(promoted))
+        entries = {c["id"] for c in M.read_json(target / "idrive-apps/catalog.json")["components"]}
+        self.assertNotIn("cluster_metrics", entries)
+        self.assertIn("ambient_config", entries)
+        self.assertFalse(any("cluster_metrics" in x["path"] for x in promoted["files"]))
+
+    def test_beta_only_pin_and_shared_metadata_cannot_be_changed(self):
+        beta, candidate, base, review, record = beta_only_fixture(self)
+        record["beta_only_components"]["idrive-apps"]["cluster_metrics"] = "f" * 64
+        M.write_json(review, record)
+        with self.assertRaisesRegex(ValueError, "Beta-only"):
+            C.promote(beta, review, self.root / "wrong-extra-pin", base, candidate)
+        with self.assertRaisesRegex(ValueError, "Retained component set"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"])
+        path = candidate / "idrive-apps/catalog.json"
+        cat = M.read_json(path)
+        next(c for c in cat["components"] if c["id"] == "ambient_config")["description"] = "unreviewed"
+        M.write_json(path, cat)
+        entry = next(c for c in M.read_json(beta / "idrive-apps/catalog.json")["components"]
+                     if c["id"] == "cluster_metrics")
+        with self.assertRaisesRegex(ValueError, "differs from its reviewed channel"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"],
+                                          beta_only={"idrive-apps": {"cluster_metrics": C.component_digest(entry)}})
+
+    def test_beta_only_cannot_remove_existing_stable_or_skip_owner_review(self):
+        beta, candidate, base, review, record = beta_only_fixture(self)
+        entry = next(c for c in M.read_json(beta / "idrive-apps/catalog.json")["components"]
+                     if c["id"] == "robertn_waze_cluster")
+        with self.assertRaisesRegex(ValueError, "Beta-only"):
+            C.compare_component_retention(beta, candidate, base, record["retained_components"],
+                                          beta_only={"idrive-apps": {"robertn_waze_cluster": C.component_digest(entry)}})
+        record.update(method="reviewed-upstream", checks={c: "passed" for c in C.UPSTREAM_CHECKS},
+                      upstream_commits={repo: "a" * 40 for repo in M.REPOS})
+        M.write_json(review, record)
+        with self.assertRaisesRegex(ValueError, "explicit owner review"):
+            C.promote(beta, review, self.root / "without-owner", base, candidate)
+        self.assertFalse(C.beta_only_valid({"idrive-apps": {"cluster_metrics": "bad"}}, {}, {}))
+        self.assertFalse(C.beta_only_valid({"idrive-apps": {"cluster-render": "a" * 64}},
+                                          {"idrive-apps": ["cluster-render"]}, {}))
+
     def test_shared_fix_updates_reviewed_variants_and_retains_renderer(self):
         beta, candidate, base, review, record = variant_fixture(self)
         target = self.root / "variant-promoted"
