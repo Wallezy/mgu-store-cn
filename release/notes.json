@@ -53,6 +53,14 @@
   ],
   "mgu-updater": [
     {
+      "version": "0.8.48",
+      "changes": [
+        "应用入口丢失时自动修复一次，避免反复重装。"
+      ],
+      "upstreamVersion": "0.8.47",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.47",
       "changes": [
         "修复 U 盘包含较多其他文件时应用无法安装的问题。"
@@ -88,6 +96,15 @@
     }
   ],
   "mgu-deploy": [
+    {
+      "version": "0.8.23",
+      "changes": [
+        "安装或移除应用时，保护其他应用的入口。",
+        "安装前检查车型接口兼容性。"
+      ],
+      "upstreamVersion": "0.8.21",
+      "cnRevision": 1
+    },
     {
       "version": "0.8.22",
       "changes": [

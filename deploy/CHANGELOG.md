@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.23
+
+CN: preserve other apps through installation/removal and preflight SOME/IP compatibility.
+
 ## 0.8.22 (CN)
 
 - 改善部分 iDrive 8 应用配置异常时的安装兼容性。
@@ -28,6 +32,13 @@
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+## 0.8.21
+
+- iDrive 7: an app whose SOME/IP manifest asks for an interface instance, method, broadcast or field the head unit does not have (or a field access it lacks a getter, setter or notifier for) is refused before anything changes, with what is missing named. The app manager would reject it partway through its install or update.
+- iDrive 7: after an app's install, update, rollback or removal, every other app that was registered is checked. One the app manager dropped meanwhile gets its registry entry back and its listing for the fallback, and the app manager restarts once to load it; one whose files changed is left as it is.
+- A removal drops the app's record before anything else, so a removal cut short never counts the app as lost.
+- `install --repair` installs a lost app again from its kept package and holds it from then on: `status` lists it under `lost_held` (and "not installed again automatically") instead of `lost_apps`, with why, until the user installs it from the Store, or the app manager has it registered at a later start. A repair that fails, a reinstall (rollback or update after a firmware update) that leaves the app uninstalled, and every lost app while safe mode is on are held too.
+
 ## 0.8.20
 
 - iDrive 8: when an install collects the appletIds in use, an installed app whose `rhmiData/application.json` is empty is passed over with a warning naming the file (it declares no appletId), and one that does not parse is kept clear of each `"appletId": <n>` in its text, warning. Neither fails the install with "cannot read … for the appletIds in use".

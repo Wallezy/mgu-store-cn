@@ -23,6 +23,8 @@
 
 - 原厂弹窗出现时，将触控和旋钮交还原厂界面。
 - 改进多指触控和异常触摸恢复。
+- Comments in the configuration and source only; no change on the unit.
+
 ## 0.6.23
 
 - Text stays drawn when several apps with large fonts (Chinese, Japanese, Korean) are open or opened one after another:
