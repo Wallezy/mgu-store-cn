@@ -38,7 +38,7 @@ the two remote manifests cannot be committed atomically.
    It sets `release_channel: beta` and keeps `installReady: false`.
 3. `release/publish_cn.py` validates the exact snapshot and its GitHub CI,
    pins the current self-hosted snapshot, then prepares a channel-scoped
-   transaction. `--publish` sends only its chosen channel changes to A/B.
+   transaction. `--publish` sends only its chosen channel changes to A.
    Supply one shared maintainer work directory and the exact manifest digest
    via `--expect-snapshot`. The private self-hosted configuration needs no
    ossutil or OSS credentials. This is a maintainer tool.
@@ -58,9 +58,10 @@ the two remote manifests cannot be committed atomically.
 The publisher retains immutable candidate manifests under
 `candidates/<manifest-sha256>/cn-manifest.json`. Resources use hash/commit paths.
 Fixed paths use `no-cache`; immutable resources have a long immutable lifetime.
-In self-hosted mode, resources and indexes form one unpublished overlay. Both
-origins verify the complete snapshot before C selects it. Historical objects
-remain available. The local publisher lock and C's process lock serialize
+In self-hosted mode, resources and indexes form one unpublished overlay. A
+verifies the complete snapshot before C selects it. A replicates incrementally
+to B after publication; B advances only after complete verification. Historical
+objects remain available. The local publisher lock and C's process lock serialize
 writes; a changed active baseline stops publication.
 
 ## Self-hosted download entry
@@ -72,12 +73,25 @@ paths for `driver`, `lock` and `result`. The official mirror and both CN channel
 share these settings. Package URLs keep `mgu.walle.pw`.
 
 The driver pins C's active snapshot and its verified plan on A or B. New bytes
-travel directly over SSH to both origins; unchanged objects and historical
-resources remain local. Each origin verifies every file's size and SHA-256.
-Only then can C activate the snapshot. Public acceptance verifies headers,
+travel directly over SSH to A; unchanged objects and historical resources
+remain local. A verifies every file's size and SHA-256 before C activates the
+snapshot. Public acceptance verifies headers,
 the exact triggering root, and the production domain using normal DNS.
 The acceptance must bind the transaction ID and root hash before the publisher
 records success. A/B snapshots and plans support recovery without OSS.
+
+A successful publication immediately triggers A's incremental replication to B.
+A persistent five-minute timer retries missed triggers and failures. A dedicated
+restricted SSH key confines rsync uploads to B's private inbox; B verifies size
+and SHA-256, prepares its origin configuration and atomically advances the
+complete-snapshot pointer. C reads that pointer on fallback.
+
+The owner accepts eventual consistency. A publication does not wait for B;
+backup convergence is recorded separately from `public_verified`. B serves its
+last complete snapshot while catching up. If A fails before a new package is
+replicated, that package may be temporarily unavailable. Replication failures
+and lag exceeding 30 minutes are maintenance issues, not successful backup
+verification. A partial transfer never becomes B's selected snapshot.
 
 A failed preparation leaves the public entry unchanged. Failed post-activation
 acceptance restores the prior entry configuration. `self-hosted-pending` and
