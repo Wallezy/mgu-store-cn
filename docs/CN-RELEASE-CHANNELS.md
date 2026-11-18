@@ -37,10 +37,11 @@ the two remote manifests cannot be committed atomically.
    including the exact bootstrap, packages, icons, sources and licenses.
    It sets `release_channel: beta` and keeps `installReady: false`.
 3. `release/publish_cn.py` validates the exact snapshot and its GitHub CI,
-   checks the fixed Hangzhou bucket/domain binding, then prepares an upload
-   plan. `--publish` uploads only its chosen channel. Supply the private
-   ossutil path/config, one shared maintainer work directory and the exact
-   manifest digest via `--expect-snapshot`. This is a maintainer tool.
+   pins the current self-hosted snapshot, then prepares a channel-scoped
+   transaction. `--publish` sends only its chosen channel changes to A/B.
+   Supply one shared maintainer work directory and the exact manifest digest
+   via `--expect-snapshot`. The private self-hosted configuration needs no
+   ossutil or OSS credentials. This is a maintainer tool.
 4. For a vehicle-validated release, record owner vehicle results against that exact Beta manifest SHA-256.
    The owner's explicitly chosen real-vehicle trial may replace an unavailable
    emulator. Offline fixtures remain a separate validation layer.
@@ -57,34 +58,34 @@ the two remote manifests cannot be committed atomically.
 The publisher retains immutable candidate manifests under
 `candidates/<manifest-sha256>/cn-manifest.json`. Resources use hash/commit paths.
 Fixed paths use `no-cache`; immutable resources have a long immutable lifetime.
-It uploads and verifies resources before fixed catalogs and commits the root
-manifest last. A failed publication attempts to restore prior mutable files;
-initial publication without prior files or a concurrent writer needs inspection.
-It never deletes objects or changes ACLs. Use one maintainer host/work directory;
-the filesystem lock does not coordinate independent publishers on other hosts.
+In self-hosted mode, resources and indexes form one unpublished overlay. Both
+origins verify the complete snapshot before C selects it. Historical objects
+remain available. The local publisher lock and C's process lock serialize
+writes; a changed active baseline stops publication.
 
 ## Self-hosted download entry
 
-The maintainer can enable `release/publication_transport.py` with a private
+Configure `release/publication_transport.py` with a private
 `~/.config/mgu-mirror/publication-transport.json` (mode `0600`), or a file named
-by `MGU_PUBLICATION_TRANSPORT`. Schema 1 uses `mode: oss-with-edge` and absolute
-paths for `driver`, `lock` and `result`. The same configuration and lock serve
-the official mirror tool and both CN channels.
+by `MGU_PUBLICATION_TRANSPORT`. Schema 1 uses `mode: self-hosted` and absolute
+paths for `driver`, `lock` and `result`. The official mirror and both CN channels
+share these settings. Package URLs keep `mgu.walle.pw`.
 
-OSS remains the authoritative staging and rollback store. Publication reads
-use its fixed HTTPS endpoint; package URLs keep `mgu.walle.pw`. After a verified
-OSS commit, the driver copies the complete site, including historical resources
-and candidate manifests, into immutable snapshots on A and B. It activates C
-only when both origins hold identical, verified bytes, then checks C with the
-production TLS name. The driver's acceptance must name the exact triggering
-manifest before the publisher records public success.
+The driver pins C's active snapshot and its verified plan on A or B. New bytes
+travel directly over SSH to both origins; unchanged objects and historical
+resources remain local. Each origin verifies every file's size and SHA-256.
+Only then can C activate the snapshot. Public acceptance verifies headers,
+the exact triggering root, and the production domain using normal DNS.
+The acceptance must bind the transaction ID and root hash before the publisher
+records success. A/B snapshots and plans support recovery without OSS.
 
-An edge failure records `edge-pending`: storage has committed but public
-acceptance has not passed. Inspect the run's `edge.log`, repair the origin or
-entry failure, and rerun the same reviewed publication or its bound transport
-driver. The edge stage does not roll back OSS or advance a success pointer.
-DNS changes, object deletion and vehicle operations are outside this transport.
-Use this publisher rather than a stale checkout without the transport hook.
+A failed preparation leaves the public entry unchanged. Failed post-activation
+acceptance restores the prior entry configuration. `self-hosted-pending` and
+`edge.log` identify an incomplete run; inspect the actual active snapshot and
+retry the reviewed publisher from that baseline. Do not blindly resume a stale
+transaction. Retained historical objects are not deleted. Legacy OSS tools are
+inactive in this mode; there is no automatic OSS fallback. DNS changes and
+vehicle operations are outside this transport.
 
 ## Owner trial
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Publish an exact CN channel snapshot to its fixed OSS prefix; never delete."""
+"""Publish an exact CN channel snapshot through the configured verified transport."""
 
 import argparse
 import datetime
@@ -171,6 +171,22 @@ class Remote:
         if rel.endswith(".png") and headers.get("content-type", "").split(";")[0] != "image/png":
             raise ValueError("Public PNG content type mismatch: " + rel)
 
+class SelfHostedRemote(Remote):
+    def __init__(self, channel, work):
+        self.channel, self.work = channel, work
+        self.base = P.BASES[channel]
+        self.transaction = T.Transaction("mgu/cn/" + ("beta/" if channel == "beta" else ""), work)
+
+    def binding(self):
+        if not T.self_hosted():
+            raise ValueError("Self-hosted transport is not enabled")
+
+    def get(self, rel, root):
+        return self.transaction.get(rel, root, download)
+
+    def put(self, rel, root):
+        self.transaction.put(rel, root)
+
 
 def entry(root, rel):
     file = root / rel
@@ -328,16 +344,22 @@ def main():
     parser.add_argument("--expect-snapshot", required=True)
     parser.add_argument("--channel", choices=tuple(DESTINATIONS), default="stable")
     for name in ("ossutil", "config", "work-dir"):
-        parser.add_argument("--" + name, required=True, type=pathlib.Path)
+        parser.add_argument("--" + name, required=name == "work-dir", type=pathlib.Path)
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
+    direct = T.self_hosted()
+    if not direct and (args.ossutil is None or args.config is None):
+        parser.error("OSS publication requires --ossutil and --config; self-hosted mode does not")
     repo = pathlib.Path(__file__).resolve().parents[1]
     for name in ("snapshot", "ossutil", "config", "work_dir"):
-        value = getattr(args, name).expanduser().resolve()
+        raw = getattr(args, name)
+        if raw is None:
+            continue
+        value = raw.expanduser().resolve()
         if name != "ossutil" and (value == repo or repo in value.parents):
             parser.error("Private settings and release resources belong outside the repository")
         setattr(args, name, value)
-    if not args.config.is_file() or args.config.stat().st_mode & 0o077:
+    if not direct and (not args.config.is_file() or args.config.stat().st_mode & 0o077):
         parser.error("OSS configuration must exist and be readable only by its owner")
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lock = args.work_dir / ".publish.lock"
@@ -357,9 +379,14 @@ def main():
             P.copy_file(P.regular(args.snapshot, item["path"]), source / item["path"])
         P.verified(source / "cn-manifest.json", args.expect_snapshot)
         with T.lock(args.publish):
-            result = publish(Remote(args.channel, args.ossutil, args.config, work), source, work, args.publish)
+            remote = (SelfHostedRemote(args.channel, work) if direct else
+                      Remote(args.channel, args.ossutil, args.config, work))
+            result = publish(remote, source, work, args.publish)
             if args.publish:
-                result = T.replicate(result, work)
+                if direct:
+                    # Include the root even when its payload is unchanged.
+                    remote.put("cn-manifest.json", source)
+                result = T.replicate(result, work, getattr(remote, "transaction", None))
         P.write_json(work / "result.json", result)
         P.write_json(args.work_dir / ("latest-" + args.channel + "-" + ("success" if args.publish else "prepared") + ".json"),
                      dict(result, work_dir=str(work)))

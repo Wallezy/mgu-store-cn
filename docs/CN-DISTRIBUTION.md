@@ -122,9 +122,9 @@ retains `installReady: false`; the helper does not upload or contact a vehicle.
 An independently validated Beta may produce a separate Stable promotion with
 `installReady: true`. Public publication/acceptance is still a separate result.
 
-The upstream mirror's `sync_oss.py` does not publish these snapshots. A dedicated
+The upstream mirror's `sync_mirror.py` does not publish these snapshots. A dedicated
 CN upload/acceptance step remains required; do not point the official mirror job
-at this prefix or advertise GitHub publication as a successful OSS update.
+at this prefix or advertise GitHub publication as successful public download publication.
 
 ## Validation matrix still required
 
