@@ -63,6 +63,29 @@ initial publication without prior files or a concurrent writer needs inspection.
 It never deletes objects or changes ACLs. Use one maintainer host/work directory;
 the filesystem lock does not coordinate independent publishers on other hosts.
 
+## Self-hosted download entry
+
+The maintainer can enable `release/publication_transport.py` with a private
+`~/.config/mgu-mirror/publication-transport.json` (mode `0600`), or a file named
+by `MGU_PUBLICATION_TRANSPORT`. Schema 1 uses `mode: oss-with-edge` and absolute
+paths for `driver`, `lock` and `result`. The same configuration and lock serve
+the official mirror tool and both CN channels.
+
+OSS remains the authoritative staging and rollback store. Publication reads
+use its fixed HTTPS endpoint; package URLs keep `mgu.walle.pw`. After a verified
+OSS commit, the driver copies the complete site, including historical resources
+and candidate manifests, into immutable snapshots on A and B. It activates C
+only when both origins hold identical, verified bytes, then checks C with the
+production TLS name. The driver's acceptance must name the exact triggering
+manifest before the publisher records public success.
+
+An edge failure records `edge-pending`: storage has committed but public
+acceptance has not passed. Inspect the run's `edge.log`, repair the origin or
+entry failure, and rerun the same reviewed publication or its bound transport
+driver. The edge stage does not roll back OSS or advance a success pointer.
+DNS changes, object deletion and vehicle operations are outside this transport.
+Use this publisher rather than a stale checkout without the transport hook.
+
 ## Owner trial
 
 The initial Beta route is the existing-store **ID7 migration** described in

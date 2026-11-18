@@ -14,6 +14,7 @@ import urllib.parse
 
 import prepare_cn as P
 import promote_cn as C
+import publication_transport as T
 
 DESTINATIONS = {"stable": "oss://walle-mgu/mgu/cn/",
                 "beta": "oss://walle-mgu/mgu/cn/beta/"}
@@ -51,6 +52,7 @@ def content_type(rel):
 
 def download(url, output):
     """Only public HTTPS; callers never pass signed or authenticated URLs."""
+    url = T.storage_url(url)
     output.parent.mkdir(parents=True, exist_ok=True)
     headers = output.with_name(output.name + ".headers")
     # The catalog now includes optional browser/Steam runtimes up to 512 MiB.
@@ -354,7 +356,10 @@ def main():
         for item in manifest["files"] + [entry(args.snapshot, "cn-manifest.json")]:
             P.copy_file(P.regular(args.snapshot, item["path"]), source / item["path"])
         P.verified(source / "cn-manifest.json", args.expect_snapshot)
-        result = publish(Remote(args.channel, args.ossutil, args.config, work), source, work, args.publish)
+        with T.lock(args.publish):
+            result = publish(Remote(args.channel, args.ossutil, args.config, work), source, work, args.publish)
+            if args.publish:
+                result = T.replicate(result, work)
         P.write_json(work / "result.json", result)
         P.write_json(args.work_dir / ("latest-" + args.channel + "-" + ("success" if args.publish else "prepared") + ".json"),
                      dict(result, work_dir=str(work)))
