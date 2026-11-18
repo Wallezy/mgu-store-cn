@@ -105,6 +105,12 @@
   ],
   "mgu-deploy": [
     {
+      "version": "0.8.24",
+      "changes": ["安全模式下可恢复丢失的商店入口，其他应用继续暂停。"],
+      "upstreamVersion": "0.8.22",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.23",
       "changes": [
         "安装或移除应用时，保护其他应用的入口。",

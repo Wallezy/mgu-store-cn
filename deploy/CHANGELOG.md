@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.24 (CN)
+
+- 安全模式下，配合国内更新器 0.8.48 或更高版本可恢复一次丢失的商店入口；其他应用仍暂停。
+
 ## 0.8.23
 
 CN: preserve other apps through installation/removal and preflight SOME/IP compatibility.
@@ -32,6 +36,7 @@ CN: preserve other apps through installation/removal and preflight SOME/IP compa
 - The CN installer and default sources use the CN HTTPS catalogs, with every package's size and SHA-256 checked before transfer. Existing updater source state and explicit offline `--from` installs remain supported.
 - The CN shell and PowerShell launchers download the checksummed JavaScript installer from the CN bootstrap directory and require Node 18 or newer on the computer.
 - The CN installer has no GitHub repository or token commands. Downloads reject GitHub hosts before connecting, including redirect targets; saved credentials are not read or removed.
+
 ## 0.8.21
 
 - iDrive 7: an app whose SOME/IP manifest asks for an interface instance, method, broadcast or field the head unit does not have (or a field access it lacks a getter, setter or notifier for) is refused before anything changes, with what is missing named. The app manager would reject it partway through its install or update.
