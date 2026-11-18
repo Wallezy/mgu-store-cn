@@ -66,7 +66,7 @@ def content_headers(path):
     return {"cache-control": cache_control(path), "content-type": kind}
 
 class Transaction:
-    """Local, verified overlay; public data changes only after both origins are ready."""
+    """Local, verified overlay committed by the configured private transport."""
     def __init__(self, prefix, work):
         self.config = settings()
         if not self.config or self.config["mode"] != "self-hosted":
