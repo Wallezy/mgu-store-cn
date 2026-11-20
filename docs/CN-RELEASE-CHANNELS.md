@@ -16,6 +16,28 @@ Neither channel falls back to GitHub.
 
 ## Build once, promote the tested bytes
 
+Formal release preparation prefers the successful exact-commit GitHub Actions
+output. Apps' `Test` workflow retains the output from release-a after the two
+independent builds agree. Store's `CN release build` builds on two hosted Linux
+runners and compares their complete output. Archives are retained for seven days;
+they are build inputs, not public channel publications.
+
+Use `release/online_build.py fetch --repository <owner/repo> --commit <full-sha>
+--out <new-directory>`. The helper checks the trusted main workflow, its successful
+run and attempt, GitHub artifact digest, source commit, catalog, package and icon
+hashes. Authenticated `gh` downloads the ZIP; an archive downloaded from the
+selected run can instead be passed with `--archive`. A local archive still needs
+the online run/digest check. Never consume an arbitrary successful run or a PR
+artifact. Use the fetched directory in place of local `release/out` when preparing
+the candidate; reuse published unchanged packages as usual. Applicable source
+and installer CI remain separate publication checks.
+
+Do not automatically start a local VM when online builds fail, expire or cannot
+be downloaded. Report the blocker, rerun the online build or request the missing
+artifact access. Local Linux builds remain available for an explicitly chosen
+debugging or recovery need. SDK-dependent app compilation still happens on the
+head unit using its donor; no BMW SDK is uploaded to Actions.
+
 Owner release policy: reviewed upstream synchronization and its CN compatibility
 adaptations publish the same payloads to both Beta and Stable in one release
 operation. Vehicle/emulator results are recorded honestly and are not a gate

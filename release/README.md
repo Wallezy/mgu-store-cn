@@ -21,7 +21,7 @@ Contributors: [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## CN publication
 
-CN OSS publication follows [the owner's channel policy](../docs/CN-RELEASE-CHANNELS.md).
+CN self-hosted publication follows [the owner's channel policy](../docs/CN-RELEASE-CHANNELS.md).
 Reviewed upstream updates publish identical payloads to Beta and Stable with
 runtime integration explicitly pending; the source, reproducibility, dependency
 and exact-commit CI checks still apply.
@@ -35,7 +35,7 @@ never stamps or pushes an untested release commit. See
 
 The reserved runtime catalog is
 `https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json`. Publishing GitHub assets does
-not populate OSS. The dedicated CN snapshot must include the corresponding apps
+not update the self-hosted channel. The dedicated CN snapshot must include the corresponding apps
 catalog and all verified dependencies before users can select this channel.
 The `CN installer checks` workflow only tests and retains bootstrap artifacts;
 it never overwrites a live bootstrap on push.

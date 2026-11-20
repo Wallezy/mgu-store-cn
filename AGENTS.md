@@ -12,6 +12,10 @@ the owner's hardware.
 - Describe the final state in comments and docs (no "changed from" /
   "previously"), build the smallest thing that solves the problem, and don't
   add UI helper text that restates a label.
+- Maintainer releases prefer verified exact-commit online build artifacts using
+  `release/online_build.py`; see `docs/CN-RELEASE-CHANNELS.md`. Reuse successful
+  outputs and unchanged published packages. Do not start a local build VM as an
+  automatic fallback for failed or inaccessible online builds.
 
 ## Updates must work in any order
 

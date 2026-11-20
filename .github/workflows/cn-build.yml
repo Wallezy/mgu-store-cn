@@ -1,0 +1,62 @@
+name: CN release build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      components:
+        description: Component IDs separated by spaces; empty builds all components
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cn-build-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [a, b]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.12.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.27.2
+      - name: Build release packages from the committed source
+        env:
+          COMPONENTS: ${{ inputs.components }}
+        run: |
+          read -r -a ids <<< "$COMPONENTS"
+          node release/release.js build "${ids[@]}"
+          python3 release/online_build.py seal --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --out release/out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cn-release-${{ github.sha }}-${{ matrix.leg }}
+          path: release/out/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+  reproducibility:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "cn-release-$GITHUB_SHA-a" --dir a
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "cn-release-$GITHUB_SHA-b" --dir b
+          diff -qr a b
