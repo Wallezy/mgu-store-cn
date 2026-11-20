@@ -69,6 +69,15 @@
   ],
   "mgu-updater": [
     {
+      "version": "0.8.52",
+      "upstreamVersion": "0.8.51",
+      "cnRevision": 1,
+      "changes": [
+        "优化下载缓存与临时空间，减少重复下载和存储写入。",
+        "阻止卸载仍被其他应用依赖的组件，及时刷新安装状态。"
+      ]
+    },
+    {
       "version": "0.8.48",
       "changes": [
         "应用入口丢失时自动修复一次，避免反复重装。"
@@ -112,6 +121,15 @@
     }
   ],
   "mgu-deploy": [
+    {
+      "version": "0.8.28",
+      "upstreamVersion": "0.8.27",
+      "cnRevision": 1,
+      "changes": [
+        "改进安装、卸载与断电恢复，减少存储写入。",
+        "修复 Windows ENET 连接诊断。"
+      ]
+    },
     {
       "version": "0.8.25",
       "changes": [
@@ -166,6 +184,14 @@
     }
   ],
   "mgu-render": [
+    {
+      "version": "0.6.28",
+      "upstreamVersion": "0.6.25",
+      "cnRevision": 1,
+      "changes": [
+        "支持 NV12 视频帧，保留现有触控和中文显示兼容。"
+      ]
+    },
     {
       "version": "0.6.27",
       "changes": [

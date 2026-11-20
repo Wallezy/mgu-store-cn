@@ -462,7 +462,7 @@ mgu-deploy.sh install [--artifact <file>...] [--skip-older] [--other-source] [--
 mgu-deploy.sh status [--read-only] [--json]   # --read-only: changes nothing
 mgu-deploy.sh relay [<id>...] [--keep-safe-mode] --yes   # a stale tool's files again, without its install step
 mgu-deploy.sh setup <id> --yes                # a tool laid again, its install step included
-mgu-deploy.sh uninstall <id> [--yes]
+mgu-deploy.sh uninstall <id> [--yes]          # refused while an installed component requires it
 mgu-deploy.sh remove-all [--json] | remove-all --yes
 mgu-deploy.sh rollback <id> [--keep-safe-mode] [--yes]
 mgu-deploy.sh restore [name] [--yes]
@@ -493,6 +493,11 @@ the app is listed under `lost_held` with the reason until it is installed
 from the Store. While safe mode is on, every lost app but the Store
 (which has **Leave safe mode**) is held; the Store too under an updater before
 CN 0.8.48.
+
+On iDrive 7, an app's first install frees app uids when the app manager has
+none left: the homes of our apps in `/var/opt/public/oap` that no registry
+entry uses go (not those changed in the last 10 minutes or that a process
+runs from). `status` shows the free app uids and those held by no app.
 
 - **rollback <id>** switches a tool to its other kept version (an update
   keeps the version before), or, on iDrive 7, an app to its kept older
@@ -740,12 +745,16 @@ services it installed stay.
 
 ### Safe mode
 
-When the head unit restarts four times in a row within 2 minutes of
-starting, by a crash or recovery restart none of our tools asked for, our
-tools' units stay off from the next start: **safe mode**. BMW's units are
-never touched. Units marked `"runsInSafeMode": true` in their tool's
-`component.json` still run; give it to units that recover the head unit or
-leave safe mode:
+When three starts of the head unit end within 5 minutes, by a crash or
+recovery restart none of our tools asked for or with no orderly shutdown
+at all (a power cut, a reset), and no start between them stays up 5
+minutes, our tools' units stay off from the next start: **safe mode**. The
+guard runs first at each start and our tools' units start after it, so the
+start that follows the third failed one already runs without them. A
+shutdown in order (switching the car off, the Store's or the HMI's
+restart) never counts. BMW's units are never touched. Units marked
+`"runsInSafeMode": true` in their tool's `component.json` still run; give
+it to units that recover the head unit or leave safe mode:
 
 ```json
 "units": [{ "name": "acme-recovery.service", "from": "systemd/acme-recovery.service", "runsInSafeMode": true }]

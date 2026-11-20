@@ -22,6 +22,14 @@ operation. Vehicle/emulator results are recorded honestly and are not a gate
 for this route. A separately requested development trial publishes only Beta
 until the owner requests its wider release.
 
+The owner's 2026-11-20 policy applies this route to reviewed feature updates
+and larger upstream adaptations as well as small fixes. Change size and
+pending per-app vehicle trials do not select Beta alone. Concrete defects,
+broken compatibility or failed build/test checks must be resolved; an unresolved
+component and its dependants are excluded while independent passing updates
+can ship. This policy does not authorize unattended adaptation or publication
+by the daily monitor.
+
 The upstream route uses `release/promote_cn.py` with exact-candidate evidence:
 `method: reviewed-upstream`, passed `source_checks`, `upstream_review` and
 `reproducible_build`, the two pinned `upstream_commits`, and an actual private

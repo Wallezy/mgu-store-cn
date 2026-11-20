@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.8.52
+
+- Use bounded RAM scratch and verified caches; retain CN channel identity and safe dependency removal.
+
+## 0.8.51
+
+- Downloads, the checked package handed to the deploy tool, and builds on the unit go to RAM when there is room (to storage otherwise), so they are not written to the head unit's storage. Source listings and the updater's state files are written only when they change.
+
+## 0.8.50
+
+- The Store gets fresh state within a few seconds when components are installed or removed outside the updater, and after the updater refuses an install, update or removal.
+
+## 0.8.49
+
+- Files downloaded from public repositories for installs are kept on the unit and reused by later installs and updates, within a fixed size limit. Removing a source clears them.
+
 ## 0.8.48
 
 CN: require deploy 0.8.23 for bounded automatic app repair.
