@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.48",
+      "changes": [
+        "安装、更新或卸载期间禁用重启按钮，避免误操作。"
+      ],
+      "upstreamVersion": "0.9.41",
+      "cnRevision": 1
+    },
+    {
       "version": "0.9.47",
       "changes": [
         "补齐新增应用的大字号中文标题，避免缺字和模糊。"
@@ -159,6 +167,14 @@
   ],
   "mgu-render": [
     {
+      "version": "0.6.27",
+      "changes": [
+        "修复部分全屏应用左侧区域无法触控的问题。"
+      ],
+      "upstreamVersion": "0.6.23",
+      "cnRevision": 2
+    },
+    {
       "version": "0.6.26",
       "changes": [
         "修复偶发渲染错误后中文文字无法显示的问题。"
@@ -202,6 +218,14 @@
     }
   ],
   "mgu-uplink": [
+    {
+      "version": "0.7.14",
+      "changes": [
+        "网络参数未变化时减少重复写入，保留正常联网恢复。"
+      ],
+      "upstreamVersion": "0.7.13",
+      "cnRevision": 1
+    },
     {
       "version": "0.7.13",
       "changes": [
