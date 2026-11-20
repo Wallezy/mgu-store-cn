@@ -19,7 +19,10 @@ Neither channel falls back to GitHub.
 Formal release preparation prefers the successful exact-commit GitHub Actions
 output. Apps' `Test` workflow retains the output from release-a after the two
 independent builds agree. Store's `CN release build` builds on two hosted Linux
-runners and compares their complete output. Archives are retained for seven days;
+runners and compares their complete output. Select changed Store component IDs
+with `workflow_dispatch`; a push builds the updater as the default. Retain
+unchanged published components instead of rebuilding old release versions.
+Archives are retained for seven days;
 they are build inputs, not public channel publications.
 
 Use `release/online_build.py fetch --repository <owner/repo> --commit <full-sha>

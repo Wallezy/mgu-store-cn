@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       components:
-        description: Component IDs separated by spaces; empty builds all components
-        required: false
-        default: ''
+        description: Component IDs separated by spaces; retain unchanged published packages
+        required: true
+        default: 'mgu-updater'
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cn-build-${{ github.sha }}
@@ -35,9 +36,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: 1.27.2
+          cache: false
       - name: Build release packages from the committed source
         env:
-          COMPONENTS: ${{ inputs.components }}
+          COMPONENTS: ${{ inputs.components || 'mgu-updater' }}
         run: |
           read -r -a ids <<< "$COMPONENTS"
           node release/release.js build "${ids[@]}"
