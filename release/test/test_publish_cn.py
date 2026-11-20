@@ -5,6 +5,7 @@ import pathlib
 import json
 import sys
 import unittest
+import threading
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
@@ -53,6 +54,27 @@ class PublicationTests(F.PreparationTests):
     def setUp(self):
         super().setUp()
         U._CI_RESPONSES.clear()
+
+    def test_parallel_verification_preserves_all_checks_and_joins_failures(self):
+        barrier = threading.Barrier(4)
+        completed = []
+        lock = threading.Lock()
+        class Remote:
+            def verify(self, rel, entry, root):
+                barrier.wait(timeout=5)
+                try:
+                    if rel == "bad":
+                        raise ValueError("size/hash/cache mismatch")
+                finally:
+                    with lock:
+                        completed.append(rel)
+        entries = [{"path": x} for x in ("one", "two", "bad", "four")]
+        with self.assertRaisesRegex(ValueError, "size/hash/cache"):
+            U.verify_files(Remote(), entries, self.root)
+        self.assertCountEqual(completed, [x["path"] for x in entries],
+                              "rollback must not race unfinished readers")
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            U.verify_files(Remote(), entries + [entries[0]], self.root)
 
     def test_paired_ci_reuses_only_live_success_for_same_commit_within_one_process(self):
         manifest = {"repositories": {repo: {"commit": "a" * 40} for repo in U.REQUIRED_CI}}

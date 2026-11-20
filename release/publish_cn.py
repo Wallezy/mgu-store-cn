@@ -3,6 +3,7 @@
 """Publish an exact CN channel snapshot through the configured verified transport."""
 
 import argparse
+import concurrent.futures
 import datetime
 import json
 import os
@@ -193,6 +194,20 @@ def entry(root, rel):
     return {"path": rel, "size": file.stat().st_size, "sha256": P.digest(file)}
 
 
+def verify_files(remote, entries, root):
+    """Bound independent reads; all workers finish before writes or rollback."""
+    paths = [item["path"] for item in entries]
+    if len(paths) != len(set(paths)):
+        raise ValueError("Duplicate verification path")
+    started = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(remote.verify, item["path"], item, root) for item in entries]
+        for future in futures:
+            future.result()
+    return {"files": len(entries), "workers": 4,
+            "elapsed_seconds": round(time.monotonic() - started, 3)}
+
+
 def publish(remote, source, work, execute):
     manifest = C.snapshot(source)
     if manifest.get("release_channel", "stable") != remote.channel:
@@ -236,12 +251,12 @@ def publish(remote, source, work, execute):
     remote.binding()
     old_root = work / "before"
     old = None
+    verification = {}
     if remote.get("cn-manifest.json", old_root) is not None:
         old = P.read_json(old_root / "cn-manifest.json")
         if old.get("release_channel", "stable") != remote.channel or not isinstance(old.get("files"), list):
             raise ValueError("The existing public channel manifest is invalid")
-        for item in old["files"]:
-            remote.verify(item["path"], item, old_root)
+        verification["before"] = verify_files(remote, old["files"], old_root)
         C.snapshot(old_root)
     if remote.channel == "stable" and C.owner_reviewed(manifest):
         v = manifest["validation"]
@@ -279,6 +294,7 @@ def publish(remote, source, work, execute):
     result = {"channel": remote.channel, "status": "prepared", "manifest_sha256": digest,
               "ci": ci, "planned": [p["path"] for p in plan], "uploaded": [],
               "public_verified": False,
+              "verification": verification,
               "vehicle_validated": remote.channel == "stable" and manifest.get("status") == "stable-validated"}
     if not execute:
         return result
@@ -313,8 +329,8 @@ def publish(remote, source, work, execute):
             raise ConcurrentPublication("The public channel changed before manifest commit")
         changed.append("cn-manifest.json")
         remote.put("cn-manifest.json", source)
-        for item in manifest["files"] + [entry(source, "cn-manifest.json")]:
-            remote.verify(item["path"], item, work / "acceptance")
+        verification["acceptance"] = verify_files(
+            remote, manifest["files"] + [entry(source, "cn-manifest.json")], work / "acceptance")
         C.snapshot(work / "acceptance")
         result.update(status="published", public_verified=True,
                       uploaded=result["uploaded"] + [candidate, "cn-manifest.json"])

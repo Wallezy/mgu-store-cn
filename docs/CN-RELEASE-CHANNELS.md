@@ -64,6 +64,16 @@ to B after publication; B advances only after complete verification. Historical
 objects remain available. The local publisher lock and C's process lock serialize
 writes; a changed active baseline stops publication.
 
+Independent file verification uses at most four readers; every size, SHA-256
+and cache check remains mandatory. All readers finish before any mutation or
+rollback. Writes and the Beta-before-Stable sequence remain serialized.
+Receipts include verification duration and file counts. The successful publisher
+receipt plus its A/C acceptance is the release acceptance record: an additional
+full-channel download is reserved for failures, infrastructure changes or an
+explicit audit. B replication is asynchronous and does not delay completion;
+record its observed status separately. Source checks, reproducible builds and
+exact-commit CI are still required.
+
 ## Self-hosted download entry
 
 Configure `release/publication_transport.py` with a private
