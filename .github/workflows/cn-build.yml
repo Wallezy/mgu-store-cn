@@ -39,8 +39,31 @@ jobs:
           cache: false
       - name: Build release packages from the committed source
         env:
-          COMPONENTS: ${{ inputs.components || 'mgu-updater' }}
+          COMPONENTS: ${{ inputs.components }}
+          BASE: ${{ github.event.before }}
         run: |
+          if [ -z "$COMPONENTS" ]; then
+            COMPONENTS=$(python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          base = os.environ.get("BASE", "")
+          ids = set()
+          if base and set(base) != {"0"}:
+              files = subprocess.check_output(["git", "diff", "--name-only", base, "HEAD"], text=True).splitlines()
+              for name in files:
+                  parts = pathlib.PurePosixPath(name).parts
+                  if len(parts) > 2 and parts[0] in ("native", "apps"):
+                      folder = pathlib.Path(*parts[:2])
+                      manifest = folder / ("component.json" if parts[0] == "native" else "mgu-app.json")
+                  elif parts and parts[0] == "deploy":
+                      manifest = pathlib.Path("deploy/component.json")
+                  else:
+                      continue
+                  if manifest.is_file():
+                      ids.add(json.loads(manifest.read_text())["id"])
+          print(" ".join(sorted(ids)) or "mgu-updater")
+          PY
+            )
+          fi
           read -r -a ids <<< "$COMPONENTS"
           node release/release.js build "${ids[@]}"
           python3 release/online_build.py seal --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --out release/out

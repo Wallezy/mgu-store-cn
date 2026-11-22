@@ -263,6 +263,14 @@
   ],
   "app-privacy": [
     {
+      "version": "1.7.3",
+      "upstreamVersion": "1.7.3",
+      "cnRevision": 1,
+      "changes": [
+        "增加 MainApp 8.2.0 兼容支持，改善部分车机首次安装失败的问题。"
+      ]
+    },
+    {
       "version": "1.7.2",
       "changes": [
         "支持 MainApp 6.4.8 的应用保护。"
