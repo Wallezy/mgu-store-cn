@@ -1431,7 +1431,7 @@ class Updater {
 
     /* When the source was last read, beside its listing. */
     checkedFile(id) {
-        return path.join(this.conf.state_dir, 'sources', `${id}.checked`);
+        return path.join(path.dirname(this.cacheFile(id)), `${id}.checked`);
     }
 
     cacheFile(id) {
@@ -1453,7 +1453,14 @@ class Updater {
                 let checked = 0;
                 try {
                     checked = Number(fs.readFileSync(this.checkedFile(def.id), 'utf8')) || 0;
-                } catch (e) { /* none yet */ }
+                } catch (e) {
+                    // A CN cache can retain a timestamp in the shared sources folder.
+                    if (cnSources.enabled(this.conf)) {
+                        try {
+                            checked = Number(fs.readFileSync(path.join(this.conf.state_dir, 'sources', `${def.id}.checked`), 'utf8')) || 0;
+                        } catch (unused) { /* none yet */ }
+                    }
+                }
                 if (cnSources.enabled(this.conf)) {
                     if (c.sourceKey !== cnSources.cacheKey(def)) {
                         throw new Error('source definition does not match the cached catalog');
@@ -2069,7 +2076,7 @@ class Updater {
                 this.fetchIcons(rt);
                 this.recordRequires(id, rt);
                 return this.recordContents(id, rt);
-            }, (err) => {
+            }).catch((err) => {
                 rt.status = err.auth ? 'auth-needed' : 'error';
                 rt.error = err.message;
                 rt.answered = err.status !== undefined || !!err.auth;
@@ -2345,6 +2352,11 @@ class Updater {
                 this.checking = null;
                 this.repairStale();
                 this.changed();
+            }, (err) => {
+                this.checking = null;
+                console.log(`check failed: ${err.message}`);
+                this.changed();
+                throw err;
             });
         return this.checking;
     }
@@ -4657,30 +4669,44 @@ class Updater {
         const attempt = () => (!needsCatalog ? sticks() : (readLease(this.conf).online ? this.checkTrialCatalog() : Promise.resolve())
             .then(() => fetched() || Date.now() >= deadline ? undefined
                 : new Promise((r) => setTimeout(r, 3000)).then(attempt)));
+        const failed = (reason) => {
+            console.log(`${this.version} not kept: ${reason}`);
+            rmIfThere(path.join(this.conf.state_dir, 'queue.json'));
+            try {
+                writeAtomic(path.join(this.conf.tool_root, SELF, 'trial-reason'), `${reason}\n`);
+            } catch (err) {
+                console.log(`cannot record update failure: ${err.message}`);
+            }
+            process.exit(1);
+        };
         this.busy = { id: SELF, phase: 'check' };
         this.changed();
-        return attempt()
+        return Promise.resolve().then(attempt)
             .then(() => deployStatus(this.conf))
             .then((deploy) => {
                 if (fetched() && deploy) {
                     fs.unlinkSync(trial);
                     rmIfThere(local);
-                    console.log(`running ${this.version}: update committed`);
-                    if (this.tokens) {
-                        this.tokens.removeLegacy((l) => console.log(l));
-                    }
-                    this.busy = null;
-                    this.takeQueue();
-                    this.next();
-                    return;
+                    return true;
                 }
                 const reason = fetched() ? 'the deploy tool does not answer it' :
                     !readLease(this.conf).online ? 'there was no internet to check it with' :
                         `it cannot fetch the catalog (${this.catalogError()})`;
-                console.log(`${this.version} not kept: ${reason}`);
-                rmIfThere(path.join(this.conf.state_dir, 'queue.json'));
-                writeAtomic(path.join(this.conf.tool_root, SELF, 'trial-reason'), `${reason}\n`);
-                process.exit(1);
+                return failed(reason);
+            })
+            .catch((err) => failed(`self-check failed: ${err.message}`))
+            .then((kept) => {
+                if (!kept) {
+                    return;
+                }
+                console.log(`running ${this.version}: update committed`);
+                if (this.tokens) {
+                    this.tokens.removeLegacy((l) => console.log(l));
+                }
+                this.busy = null;
+                this.changed();
+                this.takeQueue();
+                this.next();
             });
     }
 
@@ -4704,7 +4730,10 @@ class Updater {
             }
             const trial = path.join(this.conf.tool_root, SELF, 'trial');
             if (fs.existsSync(trial)) {
-                this.commitTrial(trial);
+                this.commitTrial(trial).catch((err) => {
+                    console.error(`cannot finish update: ${err.message}`);
+                    process.exit(1);
+                });
             } else {
                 rmIfThere(path.join(this.conf.tool_root, SELF, 'trial-local'));
                 // a queue a version that was not kept left
