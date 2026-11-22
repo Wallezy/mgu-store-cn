@@ -4,6 +4,8 @@
 
 ## 1.7.3
 
+- 增加 MainApp 8.2.0 的应用保护兼容支持。
+
 - iDrive 7: MainApp 8.2.0 is patched too: our apps are left out of its backend app inventory and updates, app-repository queries and downloads, corrupt-app reports and DiagOap readout, and a crashed one is only restarted. The tool's JSON names it `8.2.0` in `mainapp`. The other MainApp releases are patched exactly as before.
 
 ## 1.7.2
