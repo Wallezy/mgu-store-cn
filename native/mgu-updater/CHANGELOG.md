@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.54
+
+- 更新服务交接时，后台下载与手机页面正常结束，保留检查失败恢复。
+
 ## 0.8.52
 
 - Use bounded RAM scratch and verified caches; retain CN channel identity and safe dependency removal.
