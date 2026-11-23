@@ -70,12 +70,12 @@
   "mgu-updater": [
     {
       "version": "0.8.54",
-      "upstreamVersion": "0.8.52",
-      "cnRevision": 1,
       "changes": [
         "改善更新服务切换时的后台下载退出。",
         "保留检查失败恢复，不启用外部统计。"
-      ]
+      ],
+      "upstreamVersion": "0.8.52",
+      "cnRevision": 1
     },
     {
       "version": "0.8.53",
