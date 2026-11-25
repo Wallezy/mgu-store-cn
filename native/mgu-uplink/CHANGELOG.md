@@ -2,9 +2,23 @@
 
 ## Unreleased
 
+## 0.7.16
+
+- 自动查找已保存的无线网络，改善联网恢复。
+- 保留 CarPlay 与安卓投屏的无线频段保护。
+
 ## 0.7.14 (CN)
 
 - 网络参数未变化时减少重复写入，保留正常联网恢复。
+## 0.7.15
+
+- The uplink runs in the head unit's slice for standard services, so it does not take CPU time ahead of the HMI.
+
+## 0.7.14
+
+- iDrive 7 with the car's `wlan0`: while Wi-Fi is not joined, the uplink has the car's supplicant scan for the saved networks and joins one it finds, also when the car's supplicant makes no scans of its own. The scans space out over time and start over when Wi-Fi is switched on, joined or left, when wireless CarPlay or Android Auto starts or ends, and after the unit wakes from sleep; each first covers the channels the saved networks were last joined on. During wireless CarPlay or Android Auto they cover only the band the phone is not on.
+- A `wifi-scan` request (opening the Store's Wi-Fi page) also joins a saved network it finds.
+- `wifi.paused` is set only while no scans for the saved networks can be made.
 
 ## 0.7.13
 

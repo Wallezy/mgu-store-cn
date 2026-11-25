@@ -91,6 +91,8 @@ const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 const SECRET_FILE = path.join(DATA_DIR, 'updater-secret');
 const WEB_URL_FILE = path.join(DATA_DIR, 'web-url');
 const RECONNECT_MS = 2000;
+// how long the last list stays up while an updater at work is away (it restarts when it updates itself)
+const UPDATER_AWAY_MS = 20000;
 const PRESS_DEDUPE_MS = 400;
 const HIDE_SETTLE_MS = 800;
 const WEB_URL_POLL_MS = 1000;           // web-url re-read while Phone access is open and on
@@ -270,12 +272,15 @@ class Store extends OnlineApp {
         this._st = null;
         this._stRaw = null;
         this._connected = false;
+        this._helloLanguage = null;     // the language the last hello named
         this._client = new UpdaterClient(SOCKET, { reconnectMs: RECONNECT_MS });
+        this._awayTimer = null;
         this._client.on('state', (st) => {
-            // each connection says which Store this is: the updater's word that its update started
-            if (!this._connected) {
-                this._client.send({ op: 'hello', id: APP_ID, version: this._version() });
+            if (!this._connected || this._awayTimer) {
+                this._hello();
             }
+            clearTimeout(this._awayTimer);
+            this._awayTimer = null;
             this._connected = true;
             this._stRaw = st;
             this._st = localized(st);
@@ -291,13 +296,38 @@ class Store extends OnlineApp {
             this._render();
         });
         this._client.on('probe', (answer) => this._probed(answer));
-        this._client.on('down', () => {
-            if (this._connected) {
-                logger.info('updater unreachable; reconnecting');
+        // a download's progress, between states
+        this._client.on('progress', (p) => {
+            const busy = this._stRaw && this._stRaw.busy;
+            if (!busy || !p.busy || p.busy.id !== busy.id) {
+                return;
             }
-            this._connected = false;
-            this._probeFailed('updater not running');
+            this._stRaw = Object.assign({}, this._stRaw, { busy: p.busy });
+            this._st = Object.assign({}, this._st, { busy: p.busy });
             this._render();
+        });
+        this._client.on('down', () => {
+            const away = () => {
+                this._awayTimer = null;
+                this._connected = false;
+                this._render();
+            };
+            this._probeFailed('updater not running');
+            if (this._awayTimer) {
+                return;
+            }
+            const st = this._connected && this._st;
+            if (!st) {
+                away();
+                return;
+            }
+            logger.info('updater unreachable; reconnecting');
+            // an updater installing or with installs waiting: its list stays up for UPDATER_AWAY_MS
+            if (st.busy || st.components.some((c) => c.queued)) {
+                this._awayTimer = setTimeout(away, UPDATER_AWAY_MS);
+            } else {
+                away();
+            }
         });
         this._client.on('reply-error', (msg, op) => {
             // an updater before 0.8.7 does not know hello: nothing to do
@@ -419,10 +449,27 @@ class Store extends OnlineApp {
         });
     }
 
+    /* Each connection says which Store this is (the updater's word that its
+     * update started), the language whose catalog texts it shows and that
+     * it takes a download's progress on its own; again when the language
+     * changes. An updater that knows neither sends every language and the
+     * whole state. */
+    _hello() {
+        this._helloLanguage = i18n.language();
+        this._client.send({ op: 'hello', id: APP_ID, version: this._version(), language: this._helloLanguage, progress: true });
+    }
+
+    _languageChanged() {
+        this._st = localized(this._stRaw);
+        if (this._connected && i18n.language() !== this._helloLanguage) {
+            this._hello();
+        }
+    }
+
     _displayLanguage(value) {
         if (i18n.setHmiLanguage(value)) {
             logger.info(`display language ${value}: ${i18n.language()}`);
-            this._st = localized(this._stRaw);
+            this._languageChanged();
             this._forgetWritten();
             this._render();
         }
@@ -647,7 +694,7 @@ class Store extends OnlineApp {
         logger.info(`screens: ${ui}`);
         this._ui = ui;
         if (i18n.useDrawn(ui !== 'widgets')) {
-            this._st = localized(this._stRaw);
+            this._languageChanged();
         }
         this._forgetWritten();
         this._render();
@@ -1848,6 +1895,7 @@ class Store extends OnlineApp {
         logger.info(`store shutting down (${reason})`);
         clearTimeout(this._hideTimer);
         clearTimeout(this._tokenAdding && this._tokenAdding.timer);
+        clearTimeout(this._awayTimer);
         this._endPick();
         this._pollWebUrl(false);
         this._client.close();

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.32
+
+- 完善启动检查与更新锁处理。
+- 连续回退时保留最后一个验证通过的版本。
+
 ## 0.8.28
 
 - Reduce install writes; preserve CN recovery, migration and source isolation.
@@ -12,6 +17,24 @@
 ## 0.8.24 (CN)
 
 - 安全模式下，配合国内更新器 0.8.48 或更高版本可恢复一次丢失的商店入口；其他应用仍暂停。
+## 0.8.31
+
+- `status --json` names the files its answer rests on, so a caller can keep the answer until one of them changes.
+
+## 0.8.30
+
+- On iDrive 8, a start with the provisioning files, the app list and the app manager's folders as at the last start skips listing our apps again.
+- On iDrive 7, the deploy tool's status run brings an older provisioning fallback boot unit up to date, so its changes apply from the next start without waiting for an app install.
+
+## 0.8.29
+
+- A start with MainApp's files, app-privacy and the deploy tool as they were when the provisioning fallback's copy was built binds that copy without building and checking it again; any change builds it again first.
+- An update installed while the version it replaces still waits for its check at the next start keeps the version before that, which passed its check, as the one to go back to, for that check and for Undo update.
+
+## 0.8.28
+
+- At the first start after a tool update, the check of the updated tools waits for its time without holding the deploy tool's lock, so the queued iDrive 8 app changes and the app platform start at their usual time, and installs are not held up meanwhile.
+
 ## 0.8.27
 
 - Installs write less to the head unit's storage: packages are unpacked, prepared and checked in RAM when there is room (on storage otherwise), a package is written to the system partition once, straight from its file, and a backup links a file that an earlier backup or kept package already holds instead of storing it again.

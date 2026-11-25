@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.49
+
+- 优化更新进度显示和来源识别。
+- 完善局部界面刷新，保留国内来源与中文设置。
+
 ## 0.9.48 (CN)
 
 - 安装、更新或卸载期间禁用重启按钮，避免误操作。
@@ -27,6 +32,18 @@
 
 - 原厂弹窗出现时，触控和旋钮操作更顺畅。
 - 安全模式下可直接从商店退出。
+## 0.9.45
+
+- While the updater is installing or has installs waiting, the list stays on screen when it restarts.
+
+## 0.9.44
+
+- A page that stays as it is is not drawn again while it is shown.
+- The Store asks the updater for the catalog texts of its display language only and for download progress on its own, which keeps its memory use lower during installs.
+
+## 0.9.43
+
+- An app whose source was removed names that source's repo.
 
 ## 0.9.42
 

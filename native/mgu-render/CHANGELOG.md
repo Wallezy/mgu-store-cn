@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.29
+
+- 减少重复画面传输，优化绘制效率。
+
 ## 0.6.28
 
 - Support NV12 frames with existing CN input and font compatibility.
@@ -31,6 +35,10 @@
 
 - 原厂弹窗出现时，将触控和旋钮交还原厂界面。
 - 改进多指触控和异常触摸恢复。
+## 0.6.26
+
+- A frame that repeats the one on screen, with nothing it draws changed since, is not drawn and shown again; the app still gets its next tick. The app client's `alive()` tells mgu-render an app is running without sending a frame.
+
 ## 0.6.25
 
 - iDrive 7: `touch_area = auto` is the whole screen, 0,0,1920,720. Apps may claim any part of the screen, the back column included; a tap no app claims goes to the HMI. `touch_area` in the configuration sets any other area.

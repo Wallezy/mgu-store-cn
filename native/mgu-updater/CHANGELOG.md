@@ -2,7 +2,49 @@
 
 ## Unreleased
 
+## 0.8.63
+
+- 改进来源识别、检查进度和界面语言处理。
+- 更新服务自更新后继续处理待更新队列。
+
 ## 0.8.54
+## 0.8.62
+
+- The updater asks the deploy tool and app-privacy again only when what their last answers rest on has changed, and at each periodic check, and reads the free space once for downloads close together.
+
+## 0.8.61
+
+- The updater uses less CPU at start and at each check: downloads close together share one download process, a check reuses the deploy tool's answer from just before, and a start reads the sources once and leaves files that are already right as they are.
+
+## 0.8.60
+
+- The updater runs in the head unit's slice for standard services, so it does not take CPU time ahead of the HMI.
+
+## 0.8.59
+
+- After the updater updates itself, it checks the new version against its built-in source, and against every source only when that one does not answer, and goes on with the queued updates straight away.
+
+## 0.8.58
+
+- A client can ask for the catalog texts of its own language only and for download progress on its own, and the updater checks installed components for changes without reading their files each time.
+
+## 0.8.57
+
+- A new GitHub source's id is made of its owner and repo, so two repos of the same name never share one, and the phone page names each component's source by its repo.
+
+## 0.8.56
+
+- A new source never takes over an installed component of a removed source, and the usage statistics name a component's source only while that source lists it.
+
+## 0.8.55
+
+- The usage statistics name the source each Store tool's version came from.
+
+## 0.8.54
+
+- The usage statistics tell a new Store install apart from an existing one sending its first report.
+
+## 0.8.53
 
 - 更新服务交接时，后台下载与手机页面正常结束，保留检查失败恢复。
 

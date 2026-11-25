@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.7.6
+
+- 兼容更多固件的应用启动与隐私保护。
+
+## 1.7.5
+
+- A start with MainApp's bundles and app-privacy as they were at the last start runs no Node: the boot unit compares checksums only.
+
+## 1.7.4
+
+- At each start, while MainApp's bundles are exactly as app-privacy last patched them, it only checks their checksums and leaves them and its record untouched. Checking and patching the bundles takes less memory and less time.
+
 ## 1.7.3
 
 - 增加 MainApp 8.2.0 的应用保护兼容支持。

@@ -589,6 +589,38 @@ function testPendingReboot() {
         st.pending_reboot.some((p) => p.id === 'app-privacy' && p.reason === PENDING), JSON.stringify(st.pending_reboot));
 }
 
+/* status --json's inputs: what a caller keeps the answer by. */
+function testStatusInputs() {
+    const root = fakeRoot();
+    root.run(['install', '--artifact', toolArtifact('0.2.0'), '--yes']);
+    // older than the second before the run
+    sleep(1200);
+    const st = root.status();
+    const one = (t) => `${t.size}:${t.mtime.getTime()}:${t.ctime.getTime()}:${t.ino}`;
+    const stamp = (f) => {
+        try {
+            const l = fs.lstatSync(f);
+            if (!l.isSymbolicLink()) return one(l);
+            try {
+                return `${one(l)}>${one(fs.statSync(f))}`;
+            } catch (e) {
+                return `${one(l)}>-`;
+            }
+        } catch (e) {
+            return '-';
+        }
+    };
+    const inputs = st.inputs || {};
+    const moved = Object.keys(inputs).filter((f) => f !== '/proc/mounts' && stamp(f) !== inputs[f]);
+    check('status inputs: right after the run, every input it names still holds', Object.keys(inputs).length > 0 && !moved.length, moved.join(' '));
+    const entry = root.p(`var/opt/public/oap/oap_${MGR}/data/apps/stock_app.json`);
+    check('status inputs: a file it read is one, and nothing of the proc root', !!inputs[entry] &&
+        !Object.keys(inputs).some((f) => f.indexOf(root.p('proc')) === 0), Object.keys(inputs).join(' '));
+    // a file changed just before the run: the answer is not given as one to keep
+    fs.writeFileSync(entry, `${fs.readFileSync(entry, 'utf8')} `);
+    check('status inputs: none while a file it read changed within the second before it ran', !root.status().inputs);
+}
+
 /* ---- scratch in RAM, linked backups --------------------------------------------------------- */
 
 function testScratch() {
@@ -1844,12 +1876,42 @@ function testFallback() {
     const command = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback.service'), 'utf8')
         .match(/^ExecStart=\/bin\/sh -c '(.*)'$/m)[1]
         .split('/usr/bin/node').join(UNIT_NODE).split('/var/opt/').join(boot.p('var/opt/'))
-        .split('/usr/lib/').join(boot.p('usr/lib/'));
-    const bootRun = () => cp.spawnSync('sh', ['-c', `mount() { echo "$*" >> '${mounts}'; }; ${command}`], { encoding: 'utf8' });
+        .split('/usr/lib/').join(boot.p('usr/lib/')).split('/etc/systemd/').join(boot.p('etc/systemd/'));
+    const bootRun = (cmd) => cp.spawnSync('sh', ['-c', `mount() { echo "$*" >> '${mounts}'; }; ${cmd || command}`], { encoding: 'utf8' });
     let b = bootRun();
     check('boot unit: a copy that parses is bound', b.status === 0 &&
         fs.readFileSync(mounts, 'utf8').includes(`--bind ${boot.p('var/opt/mgu-deploy/main.js')}`), `${b.stdout}${b.stderr}`);
     fs.unlinkSync(mounts);
+    // a start with everything as at the copy's build binds it with no Node; any change builds it again
+    const noNode = command.split(UNIT_NODE).join(path.join(T, 'no-node'));
+    const bound = () => { const m = fs.existsSync(mounts) && fs.readFileSync(mounts, 'utf8'); fs.rmSync(mounts, { force: true }); return !!m && m.includes('--bind'); };
+    b = bootRun(noNode);
+    check('boot unit: with its inputs and the copy as at its build, the copy is bound and no Node runs',
+        b.status === 0 && bound() && b.stdout.includes('fallback copy unchanged since its build'), `${b.stdout}${b.stderr}`);
+    const copyFile = boot.p('var/opt/mgu-deploy/main.js'), stockFile = boot.p('usr/lib/oap-mainapp/src/main.js');
+    const builtCopy = fs.readFileSync(copyFile), stock = fs.readFileSync(stockFile);
+    [['the copy', copyFile, Buffer.concat([builtCopy, Buffer.from('\n')])],
+        ['the stock main.js', stockFile, Buffer.concat([stock, Buffer.from('\n')])],
+        ['the builder', boot.p('var/opt/mgu-deploy/current/fallback_build.js'), null],
+        ['the unit', boot.p('etc/systemd/system/mgu-app-fallback.service'), null]].forEach(([what, file, data]) => {
+        const was = fs.readFileSync(file);
+        const lnk = fs.lstatSync(file).isSymbolicLink() ? fs.readlinkSync(file) : null;
+        if (lnk) fs.unlinkSync(file);
+        fs.writeFileSync(file, data || Buffer.concat([was, Buffer.from('\n')]));
+        b = bootRun(noNode);
+        const skipped = bound();
+        b = bootRun();
+        const rebuilt = bound();
+        check(`boot unit: ${what} changed: the copy is built again`, !skipped && rebuilt, `${b.stdout}${b.stderr}`);
+        if (lnk) { fs.unlinkSync(file); fs.symlinkSync(lnk, file); } else fs.writeFileSync(file, was);
+        bootRun();
+        bound();
+    });
+    fs.rmSync(boot.p('var/opt/mgu-deploy/main.js.stamp'), { force: true });
+    b = bootRun(noNode);
+    check('boot unit: without its stamp the copy is built', !bound(), `${b.stdout}${b.stderr}`);
+    bootRun();
+    bound();
     fs.writeFileSync(boot.p('usr/lib/oap-mainapp/src/main.js'), unparsable);
     b = bootRun();
     check('boot unit: a copy that does not parse is not bound, the unit succeeds', b.status === 0 && !fs.existsSync(mounts) &&
@@ -1893,6 +1955,23 @@ function testFallback() {
     check('MainApp 6.5.5 (.bundle.js): boot unit builds from and binds over main.bundle.js', b655.status === 0 &&
         fs.readFileSync(mounts655, 'utf8').trim() ===
         `--bind ${boot655.p('var/opt/mgu-deploy/main.js')} ${boot655.p('usr/lib/oap-mainapp/src/main.bundle.js')}`, `${b655.stdout}${b655.stderr}`);
+    // status brings an older boot unit up to date, without an app install
+    const older = fakeRoot();
+    older.run(['fallback', 'on', '--yes']);
+    const olderUnit = older.p('etc/systemd/system/mgu-app-fallback.service');
+    write(olderUnit, '[Unit]\nDescription=an older boot unit\n');
+    const killed = older.kills().length;
+    const os7 = older.status();
+    check('boot unit: status brings an older one up to date, and only the unit file',
+        fs.readFileSync(olderUnit, 'utf8') === fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback.service'), 'utf8') &&
+        os7.listing.reason === 'boot unit brought up to date' && older.kills().length === killed && older.status().listing.state === 'ok',
+        JSON.stringify(os7.listing));
+    // a unit whose kind is not known (both MainApp folders, no HMI running) keeps its boot unit as it is
+    fs.mkdirSync(older.p('usr/lib/oap-mainapp21'), { recursive: true });
+    write(olderUnit, '[Unit]\nDescription=an older boot unit\n');
+    older.status();
+    check('boot unit: status leaves it on a unit whose kind is not known',
+        fs.readFileSync(olderUnit, 'utf8') === '[Unit]\nDescription=an older boot unit\n');
 }
 
 /* The fallback built from the fixture main.js, run: its handle() is
@@ -3205,6 +3284,57 @@ function testCheck() {
     root.run(['install', '--artifact', checkArtifact('0.3.0'), '--yes'], env);
     root.run(['rollback', 'fixture-tool', '--yes'], env);
     check('check: a rollback drops the note for the next start', !fs.existsSync(root.p('var/opt/mgu-deploy/verify.json')));
+
+    // versions installed while the one before them still waits for its check (the boot check waits for its
+    // uptime without the lock): the version that passed a check stays the one to go back to
+    const kept = (rt) => fs.readdirSync(path.join(rt.tool('fixture-tool'), 'versions')).sort().join(',');
+    const atBoot = (rt, text) => write(rt.p('var/opt/mgu-deploy/recmgr-at-boot.json'),
+        JSON.stringify({ boot: fs.readFileSync(rt.p('proc/boot_id'), 'utf8').trim(), text }));
+    /* 0.2.0 passed its check, 0.3.0 waits for its check at this start */
+    const due = () => {
+        const rt = fakeRoot({ active: 'fixture-tool.service' });
+        rt.run(['install', '--artifact', checkArtifact('0.2.0'), '--yes'], env);
+        rt.reboot(Math.floor(Date.now() / 1000) + 5);
+        rt.run(['verify'], env);
+        atBoot(rt, '[Whitelist]\n');
+        rt.run(['install', '--artifact', checkArtifact('0.3.0'), '--yes'], env);
+        rt.reboot(Math.floor(Date.now() / 1000) + 10);
+        return rt;
+    };
+    const chain = () => {
+        const rt = due();
+        atBoot(rt, '[Whitelist]\n');
+        const r4 = rt.run(['install', '--artifact', checkArtifact('0.4.0'), '--yes'], env);
+        const r5 = rt.run(['install', '--artifact', checkArtifact('0.5.0'), '--yes'], env);
+        return { rt, out: r4.out + r5.out, noted: (readJsonOrNull(rt.p('var/opt/mgu-deploy/verify.json')) || {})['fixture-tool'] };
+    };
+    let c = chain();
+    check('check: an update over a version not checked yet keeps the version before that as the one to go back to',
+        c.noted && c.noted.version === '0.5.0' && c.noted.previous === '0.2.0' && JSON.stringify(c.noted.unchecked) === '["0.3.0","0.4.0"]' &&
+        kept(c.rt) === '0.2.0,0.4.0,0.5.0' && c.out.includes('0.2.0 comes back if it does not work (0.3.0 was not checked yet)') &&
+        c.out.includes('0.2.0 comes back if it does not work (0.4.0 was not checked yet)'),
+        `${c.out}\n${JSON.stringify(c.noted)} ${kept(c.rt)}`);
+    c.rt.reboot(Math.floor(Date.now() / 1000) + 15);
+    fs.writeFileSync(path.join(dir, 'fail-0.5.0'), '');
+    r = c.rt.run(['verify'], env);
+    last = readJsonOrNull(c.rt.p('var/opt/mgu-deploy/last-verify.json')) || {};
+    check('check: one that fails then goes back to the version that passed its check',
+        r.status === 0 && cur(c.rt) === 'versions/0.2.0' && last.results && last.results[0].rolledBack === true &&
+        last.results[0].previous === '0.2.0', `${r.out}\n${JSON.stringify(last)}`);
+    fs.unlinkSync(path.join(dir, 'fail-0.5.0'));
+    c = chain();
+    c.rt.reboot(Math.floor(Date.now() / 1000) + 15);
+    r = c.rt.run(['verify'], env);
+    check('check: one that passes then keeps the version to go back to beside it, the versions between go',
+        r.status === 0 && cur(c.rt) === 'versions/0.5.0' && kept(c.rt) === '0.2.0,0.5.0' &&
+        c.rt.status().components.find((x) => x.id === 'fixture-tool').previous === '0.2.0', `${r.out}\n${kept(c.rt)}`);
+    // meanwhile Undo update goes back to it too
+    c = chain();
+    check('check: Undo update while it waits for its check names the version that passed its check',
+        c.rt.status().components.find((x) => x.id === 'fixture-tool').previous === '0.2.0');
+    r = c.rt.run(['rollback', 'fixture-tool', '--yes'], env);
+    check('check: a rollback then goes back to it', r.status === 0 && cur(c.rt) === 'versions/0.2.0' &&
+        !fs.existsSync(c.rt.p('var/opt/mgu-deploy/verify.json')), r.out);
 }
 
 /* A tool an installed app requires (the updater's record of its install)
@@ -4563,6 +4693,26 @@ function testLock() {
     r = root.run(['uninstall', 'fixture-tool', '--yes']);
     check('lock: a lock whose holder is gone is taken over', r.status === 0 && !fs.existsSync(root.tool('fixture-tool')) &&
         !fs.existsSync(lock), r.out);
+    // the boot check waits for its uptime without the lock: the start's other runs go ahead meanwhile
+    write(root.p('proc/uptime'), '20.00 10.00\n');
+    write(root.p('var/opt/mgu-deploy/verify.json'), JSON.stringify({ 'fixture-tool': { version: '0.2.0', previous: null, boot: 'boot-0' } }));
+    const outFile = `${root.R}.verify.out`;
+    const fd = fs.openSync(outFile, 'w');
+    const child = cp.spawn(UNIT_NODE, [UNIT_JS, 'verify'],
+        { env: Object.assign({}, root.env, { MGU_DEPLOY_VERIFY_AFTER_S: '32' }), stdio: ['ignore', fd, fd] });
+    fs.closeSync(fd);
+    const t0 = Date.now();
+    while (!fs.readFileSync(outFile, 'utf8').includes('once the head unit has been up 32s') && Date.now() - t0 < 10000) sleep(100);
+    r = runWait(['install', '--artifact', toolArtifact('0.2.0'), '--yes'], 500);
+    check('lock: an install runs while the boot check waits', r.status === 0 && !r.out.includes('waiting for the mgu-deploy run') &&
+        fs.existsSync(root.tool('fixture-tool')), r.out);
+    const lastFile = root.p('var/opt/mgu-deploy/last-verify.json');
+    while (!(fs.existsSync(lastFile) && !fs.existsSync(lock)) && Date.now() - t0 < 30000) sleep(100);
+    const last = readJsonOrNull(lastFile);
+    check('lock: the boot check then takes the lock and checks the version current at that time',
+        last && JSON.stringify(last.results) === JSON.stringify([{ id: 'fixture-tool', version: '0.2.0', ok: true }]) &&
+        !fs.existsSync(root.p('var/opt/mgu-deploy/verify.json')) && !fs.existsSync(lock), fs.readFileSync(outFile, 'utf8') + JSON.stringify(last));
+    child.kill();
 }
 
 /* An id provisioning already uses keeps provisioning's flags: hidden. */
@@ -9619,6 +9769,32 @@ function testId8Listing() {
     check('id8 listing: relist (the boot unit) puts it back', rl.status === 0 && rl.out.includes('listed for the provisioning fallback: oap-cardash') &&
         !!custom()['oap-cardash'], rl.out);
     check('id8 listing: relist again lists nothing', root.run(['relist']).out.includes('every app of ours is listed'));
+    // the boot unit's relist: with its inputs as at its last full run no Node starts; any change runs it again
+    const relistLine = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback-id8.service'), 'utf8')
+        .match(/^ExecStartPre=-\/bin\/sh -c '(.*)'$/m)[1].split('/bin/sh /var/opt/mgu-deploy/mgu-deploy.sh relist').join('RELIST')
+        .split('/var/opt/').join(root.p('var/opt/')).split('/usr/share/').join(root.p('usr/share/'))
+        .split('/usr/lib/').join(root.p('usr/lib/')).split('/etc/systemd/').join(root.p('etc/systemd/'));
+    const bootRelist = (cmd) => cp.spawnSync('sh', ['-c', relistLine.split('RELIST').join(cmd || `${UNIT_NODE} ${UNIT_JS} relist`)],
+        { encoding: 'utf8', env: Object.assign({}, process.env, root.env) }).stdout;
+    const stampFile = root.p('var/opt/mgu-deploy/relist.stamp');
+    let br = bootRelist();
+    check('id8 listing: the boot unit\'s relist records its inputs after a full run', br.includes('every app of ours is listed') &&
+        fs.existsSync(stampFile), br);
+    br = bootRelist('echo NODE-RAN');
+    check('id8 listing: with them unchanged the boot unit runs no relist', br === 'our apps are listed as at the last start\n', br);
+    fs.unlinkSync(root.p(`var/opt/public/oap/oap_${MGR}/data/custom_apps.json`));
+    br = bootRelist('echo NODE-RAN');
+    check('id8 listing: a changed listing runs relist', br === 'NODE-RAN\n' && !fs.existsSync(stampFile), br);
+    br = bootRelist();
+    check('id8 listing: which lists the app again and records the inputs', br.includes('listed for the provisioning fallback: oap-cardash') &&
+        !!custom()['oap-cardash'] && bootRelist('echo NODE-RAN').includes('as at the last start'), br);
+    const das0 = root.p('usr/share/tm/prov/das_000.xml'), das0Text = fs.readFileSync(das0);
+    fs.appendFileSync(das0, '\n');
+    check('id8 listing: a changed das file runs relist', bootRelist('echo NODE-RAN') === 'NODE-RAN\n');
+    fs.writeFileSync(das0, das0Text);
+    br = bootRelist('echo another mgu-deploy run holds the lock; status lists them');
+    check('id8 listing: a relist that did not run records nothing', !fs.existsSync(stampFile) && bootRelist('echo NODE-RAN') === 'NODE-RAN\n', br);
+    bootRelist();
     fs.unlinkSync(root.p(`var/opt/public/oap/oap_${MGR}/data/custom_apps.json`));
     const again = root.run(['install', '--artifact', art, '--yes']);
     check('id8 listing: an install with the app current puts it back', again.status === 0 &&
@@ -9626,7 +9802,7 @@ function testId8Listing() {
         again.out.includes('listed for the provisioning fallback, from the next start of the head unit: oap-cardash') && !!custom()['oap-cardash'], again.out);
     const unit = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback-id8.service'), 'utf8');
     check('id8 listing: the fallback\'s boot unit relists before it builds the copy',
-        /\nExecStartPre=-\/bin\/sh \/var\/opt\/mgu-deploy\/mgu-deploy\.sh relist\n/.test(unit));
+        /\nExecStartPre=-\/bin\/sh -c '.*\/bin\/sh \/var\/opt\/mgu-deploy\/mgu-deploy\.sh relist.*'\nExecStart=/.test(unit));
     const unitPath = root.p('etc/systemd/system/mgu-app-fallback.service');
     write(unitPath, '[Unit]\nDescription=an older boot unit\n');
     const ur = root.status();
@@ -11103,6 +11279,7 @@ const SUITES = [
     testRefusals,
     testToolInstall,
     testPendingReboot,
+    testStatusInputs,
     testApps,
     testScratch,
     testAppUids,

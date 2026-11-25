@@ -1212,7 +1212,40 @@ function testFetch(certs, pubDir) {
             ok('CN fetch: a batch refuses a redirect to GitHub',
                 r.code !== 0 && r.events.some((e) => e.file === 0 && /GitHub downloads are disabled/.test(e.error || '')) &&
                 seen.length === 1 && seen[0].url === '/redirect-github');
+        })
+        .then(() => {
+            return serveFetch([
+                { id: 1, job: Object.assign({}, base, { url: `https://updates.test:${HTTPS_PORT}/payload.bin`, headers: {}, dest: path.join(dl, 's1'), maxBytes: 300000 }) },
+                { id: 2, job: Object.assign({}, base, { url: `https://updates.test:${HTTPS_PORT}/missing.bin`, headers: {}, dest: path.join(dl, 's2') }) }
+            ], { id: 3, remove: dl }, FETCH_UID);
+        })
+        .then((r) => {
+            const end = (id) => r.events.filter((e) => e.id === id && (e.done || e.error || e.removed));
+            ok('fetch serve: jobs side by side in one child, each ended once under its own id', end(1).length === 1 && end(1)[0].done &&
+                end(1)[0].bytes === 300000 && end(2).length === 1 && end(2)[0].status === 404, JSON.stringify(r.events.filter((e) => e.progress === undefined)));
+            ok('fetch serve: a remove empties the folder as the fetch uid; the child ends once stdin closes', end(3).length === 1 &&
+                fs.readdirSync(dl).length === 0 && r.code === 0);
         });
+}
+
+/* fetch.js serve: jobs written at once, then remove once they have ended, then stdin closed. */
+function serveFetch(jobs, remove, uid) {
+    return new Promise((resolve) => {
+        const child = cp.spawn(process.execPath, [path.join(ROOT, 'js', 'fetch.js'), 'serve'],
+            { uid, gid: uid, stdio: ['pipe', 'pipe', 'inherit'], env: {}, cwd: '/' });
+        let out = '';
+        const events = () => out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        child.stdout.on('data', (d) => {
+            out += d;
+            const ended = events().filter((e) => e.done || e.error).length;
+            if (ended === jobs.length && remove) {
+                child.stdin.end(`${JSON.stringify(remove)}\n`);
+                remove = null;
+            }
+        });
+        child.on('close', (code) => resolve({ code, events: events() }));
+        jobs.forEach((j) => child.stdin.write(`${JSON.stringify(j)}\n`));
+    });
 }
 
 /* Root reads a download only if it is a regular file within the size. */
@@ -2666,22 +2699,22 @@ function testSources(certs) {
             seen.length = 0;
             return priv({ op: 'source-add', type: 'github', repo: 'owner/private2' });
         })
-        .then((err) => until(st, () => src('private2').status === 'ok', 20000, 'the second private repo read').then(() => err))
+        .then((err) => until(st, () => src('owner_private2').status === 'ok', 20000, 'the second private repo read').then(() => err))
         .then((err) => {
             const id = st().tokens[0].id;
-            ok('token: a repo added later is read with a stored token that reaches it', err === null && src('private2').auth.token === id &&
-                st().tokens[0].usedBy.sort().join() === 'private,private2' && st().tokens.length === 1, JSON.stringify(st().tokens));
+            ok('token: a repo added later is read with a stored token that reaches it', err === null && src('owner_private2').auth.token === id &&
+                st().tokens[0].usedBy.sort().join() === 'owner_private2,private' && st().tokens.length === 1, JSON.stringify(st().tokens));
             return priv({ op: 'source-add', type: 'github', repo: 'other/third' });
         })
-        .then(() => until(st, () => src('third').status === 'auth-needed', 20000, 'the third repo refused'))
+        .then(() => until(st, () => src('other_third').status === 'auth-needed', 20000, 'the third repo refused'))
         .then(() => {
-            ok('token: a repo no stored token reaches needs auth', src('third').auth === null);
+            ok('token: a repo no stored token reaches needs auth', src('other_third').auth === null);
             // a token the deploy tool writes (its file and its entry) while the repo is being read with
             // the tokens there were, and just before a write of the updater's own: picked up without a
             // request, and the repo read again once that read is done
             seen.length = 0;
             gh.repos['other/third'].delayMs = 1500;
-            u.checkSource('third');
+            u.checkSource('other_third');
             return until(() => seen.some((x) => /\/repos\/other\/third/.test(x.url)), (x) => x, 10000, 'the read under way');
         })
         .then(() => {
@@ -2690,15 +2723,15 @@ function testSources(certs) {
             list.push({ id: '0badc0de', kind: 'github', addedAt: Date.now() });
             fs.writeFileSync(path.join(M, 'cred', 'tokens.json'), JSON.stringify(list));
             u.tokens.update(list[0].id, { label: 'tester' });
-            ok('token files: a change is noticed, also after a write of the updater\'s own', src('third').status === 'checking' &&
+            ok('token files: a change is noticed, also after a write of the updater\'s own', src('other_third').status === 'checking' &&
                 u.scanTokens() === true && u.scanTokens() === false);
             gh.repos['other/third'].delayMs = 0;
-            return until(st, () => src('third').status === 'ok' && (st().tokens.find((t) => t.id === '0badc0de') || {}).login === 'other-acct',
+            return until(st, () => src('other_third').status === 'ok' && (st().tokens.find((t) => t.id === '0badc0de') || {}).login === 'other-acct',
                 20000, 'the third repo read with the new token');
         })
         .then(() => {
             ok('token files: a token the deploy tool adds reads the repo that needed it, and is checked with GitHub',
-                src('third').auth.token === '0badc0de' && src('private').auth.token !== '0badc0de' && st().tokens.length === 2);
+                src('other_third').auth.token === '0badc0de' && src('private').auth.token !== '0badc0de' && st().tokens.length === 2);
             return priv({ op: 'token-add', token: 'tok-all' });
         })
         .then((err) => {
@@ -2706,12 +2739,12 @@ function testSources(certs) {
                 fs.readdirSync(path.join(M, 'cred')).filter((n) => /^token-/.test(n)).length === 2);
             return Promise.all([priv({ op: 'token-remove', id: '0badc0de' }), priv({ op: 'token-remove', id: 'nope' })]);
         })
-        .then((errs) => until(st, () => src('third').status === 'auth-needed', 20000, 'the third repo without its token').then(() => errs))
+        .then((errs) => until(st, () => src('other_third').status === 'auth-needed', 20000, 'the third repo without its token').then(() => errs))
         .then((errs) => {
             ok('token-remove: the repo only it reached needs auth again; the others keep theirs', errs[0] === null && /no token nope/.test(errs[1]) &&
-                !fs.existsSync(path.join(M, 'cred', 'token-0badc0de')) && src('private').status === 'ok' && src('private2').status === 'ok' &&
+                !fs.existsSync(path.join(M, 'cred', 'token-0badc0de')) && src('private').status === 'ok' && src('owner_private2').status === 'ok' &&
                 !JSON.parse(fs.readFileSync(path.join(M, 'cred', 'tokens.json'), 'utf8')).some((t) => t.id === '0badc0de'), JSON.stringify(errs));
-            return priv({ op: 'source-remove', id: 'third' });
+            return priv({ op: 'source-remove', id: 'other_third' });
         })
         .then(() => {
             ok('login: offered with a GitHub App client id configured', st().signin === true);
@@ -2762,10 +2795,10 @@ function testSources(certs) {
             return priv({ op: 'token-remove', id: st().tokens.find((t) => t.id !== devId).id }).then(() => devId);
         })
         .then((devId) => until(st, () => src('private').status === 'ok' && src('private').auth && src('private').auth.token === devId &&
-            src('private2').status === 'auth-needed', 20000, 'the sources re-read').then(() => devId))
+            src('owner_private2').status === 'auth-needed', 20000, 'the sources re-read').then(() => devId))
         .then((devId) => {
             ok('token-remove: each source falls back to another token that reaches it, else needs auth',
-                st().tokens.length === 1 && st().tokens[0].usedBy.join() === 'private' && src('private2').auth === null);
+                st().tokens.length === 1 && st().tokens[0].usedBy.join() === 'private' && src('owner_private2').auth === null);
             gh.device = { error: 'access_denied' };
             return priv({ op: 'login-start' });
         })
@@ -2777,7 +2810,7 @@ function testSources(certs) {
         })
         .then(() => {
             ok('login: cancelled, gone from the state', st().login === null);
-            return priv({ op: 'source-remove', id: 'private2' });
+            return priv({ op: 'source-remove', id: 'owner_private2' });
         })
         .then(() => {
             // a requirement that fails to install: the app does not install, and says why
@@ -3106,15 +3139,15 @@ function testSources(certs) {
         .then((errs) => {
             ok('source-add: github with a channel, without; refused twice, with a bad channel, or not https',
                 errs[0] === null && errs[1] === null && /already a source/.test(errs[2]) && /channel/.test(errs[3]) && /https/.test(errs[4]), JSON.stringify(errs));
-            return until(st, () => src('tagged').status === 'ok' && src('plain').status === 'ok', 20000, 'the added sources read');
+            return until(st, () => src('third_tagged').status === 'ok' && src('third_plain').status === 'ok', 20000, 'the added sources read');
         })
         .then(() => {
             const saved = JSON.parse(fs.readFileSync(sources, 'utf8')).sources;
-            ok('source-add: written to sources.json, root-only', saved.some((x) => x.id === 'tagged' && x.channel === 'tags') &&
-                saved.some((x) => x.id === 'plain' && x.channel === undefined) && (fs.statSync(sources).mode & 0o777) === 0o600);
+            ok('source-add: written to sources.json, root-only', saved.some((x) => x.id === 'third_tagged' && x.channel === 'tags') &&
+                saved.some((x) => x.id === 'third_plain' && x.channel === undefined) && (fs.statSync(sources).mode & 0o777) === 0o600);
             ok('tags: the highest x.y.z tag (v, plain or <id>@) is read', comp('tag_tool').version === '1.2.0' && comp('tag_tool').revision === null &&
-                src('tagged').channel === 'tags', JSON.stringify(comp('tag_tool')));
-            ok('channel: a repo without releases follows its default branch', src('plain').channel === 'branch:trunk' && comp('plain_tool').id === 'plain_tool');
+                src('third_tagged').channel === 'tags', JSON.stringify(comp('tag_tool')));
+            ok('channel: a repo without releases follows its default branch', src('third_plain').channel === 'branch:trunk' && comp('plain_tool').id === 'plain_tool');
             // source-probe: what a repo can be added on
             ghRepo('third/forks', { default_branch: 'dev', branches: { feature: 'a', master: 'b', dev: 'c', main: 'd', 'with space': 'e' } });
             ghRepo('third/many', { default_branch: 'zz-default' });
@@ -4250,17 +4283,17 @@ function testIdrive7(certs) {
         .then(() => until(() => u.origins.car_vitals, (o) => !!o, 30000, 'car_vitals adopted'))
         .then(() => {
             ok('idrive7: an app the repository lists gets it as origin; one it does not is imported',
-                u.origins.car_vitals.source === 'idrive7-apps' && !u.origins.my_kitapp &&
+                u.origins.car_vitals.source === 'cauliflowermossgrape_idrive7-apps' && !u.origins.my_kitapp &&
                 JSON.stringify(JSON.parse(fs.readFileSync(path.join(state, 'appmanager.json'), 'utf8')).imported) === '["my_kitapp"]',
                 JSON.stringify(u.origins));
             const cv = comp('car_vitals');
-            ok('idrive7: its app shows installed from that source, with the newer version as its update', cv.source === 'idrive7-apps' &&
+            ok('idrive7: its app shows installed from that source, with the newer version as its update', cv.source === 'cauliflowermossgrape_idrive7-apps' &&
                 cv.status === 'update' && cv.installed === '2.13.0' && cv.version === '2.14.0' && !cv.blocked, JSON.stringify(cv));
             const mine = comp('my_kitapp');
             ok('idrive7: an imported app keeps a row, installed and removable', mine.source === 'imported' && mine.status === 'installed' &&
                 mine.uninstallable === true, JSON.stringify(mine));
             const rl = comp('redline');
-            ok('idrive7: an installed app the repository lists without uninstallable is removable', rl.source === 'idrive7-apps' &&
+            ok('idrive7: an installed app the repository lists without uninstallable is removable', rl.source === 'cauliflowermossgrape_idrive7-apps' &&
                 rl.installed === '1.0.0' && rl.uninstallable === true, JSON.stringify(rl));
             return ask(conf.socket, { op: 'uninstall', id: 'redline', secret: u.secret })
                 .then((err) => until(() => comp('redline'), (r) => !u.busy && r.status === 'available', 30000, 'redline removed').then(() => err));
@@ -4268,7 +4301,7 @@ function testIdrive7(certs) {
         .then((err) => {
             ok('idrive7: its Remove runs the deploy tool\'s uninstall; it shows not installed', err === null &&
                 /^uninstall redline --yes$/m.test(fs.readFileSync(deployLog, 'utf8')) && !comp('redline').installed, `${err} ${JSON.stringify(comp('redline'))}`);
-            return until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched');
+            return until(() => u.src.get('cauliflowermossgrape_idrive7-apps').icons, (x) => !x, 30000, 'icons fetched');
         })
         .then(() => {
             const iconOf = (id) => comp(id).icon && fs.readFileSync(comp(id).icon);
@@ -4288,7 +4321,7 @@ function testIdrive7(certs) {
                 'then each place it names until one is there), an installed app\'s too',
             first.length === 6 && first.filter((u) => /car_vitals/.test(u)).length === 1 && first.every((u) => /^raw:/.test(u)), first.join(' '));
             mark = seen.length;
-            return u.check().then(() => until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
+            return u.check().then(() => until(() => u.src.get('cauliflowermossgrape_idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
         })
         .then(() => {
             ok('requests: a check of an unchanged source reads no icon, kept or missing', iconReads(mark).length === 0, iconReads(mark).join(' '));
@@ -4296,7 +4329,7 @@ function testIdrive7(certs) {
             u = new Updater(conf);
             mark = seen.length;
             return u.serve().then(() => u.refresh()).then(() => u.check())
-                .then(() => until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
+                .then(() => until(() => u.src.get('cauliflowermossgrape_idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
         })
         .then(() => {
             ok('requests: nor does a restarted updater: a missing icon is remembered', iconReads(mark).length === 0 && comp('gforce').icon,
@@ -4312,7 +4345,7 @@ function testIdrive7(certs) {
             files['more/gforce/icon.png'] = [png(99, 5), 0o644];
             repo.branches.main = ghCommit('cauliflowermossgrape/idrive7-apps', files);
             mark = seen.length;
-            return u.check().then(() => until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
+            return u.check().then(() => until(() => u.src.get('cauliflowermossgrape_idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
         })
         .then(() => {
             const reads = iconReads(mark);
@@ -4323,8 +4356,8 @@ function testIdrive7(certs) {
             return u.serve().then(() => u.refresh());
         })
         .then(() => {
-            ok('idrive7: a later start keeps what was decided', u.origins.car_vitals.source === 'idrive7-apps' &&
-                u.adopted.imported.join() === 'my_kitapp' && u.stored.filter((d) => d.id === 'idrive7-apps').length === 1, JSON.stringify(u.stored));
+            ok('idrive7: a later start keeps what was decided', u.origins.car_vitals.source === 'cauliflowermossgrape_idrive7-apps' &&
+                u.adopted.imported.join() === 'my_kitapp' && u.stored.filter((d) => d.id === 'cauliflowermossgrape_idrive7-apps').length === 1, JSON.stringify(u.stored));
             // a new commit while car_vitals is installed: 2.14.1 with a new icon
             const repo = gh.repos['cauliflowermossgrape/idrive7-apps'];
             const tree = repo.trees[repo.branches.main];
@@ -4336,7 +4369,7 @@ function testIdrive7(certs) {
             files['apps/car_vitals/icon.png'] = [newCarIcon, 0o644];
             repo.branches.main = ghCommit('cauliflowermossgrape/idrive7-apps', files);
             mark = seen.length;
-            return u.check().then(() => until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
+            return u.check().then(() => until(() => u.src.get('cauliflowermossgrape_idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
         })
         .then(() => {
             const cv = comp('car_vitals');
@@ -4362,7 +4395,7 @@ function testIdrive7(certs) {
         })
         .then(() => {
             ok('idrive7: with its source removed by the owner, an app is imported and the source stays removed',
-                u.adopted.imported.indexOf('dyno') >= 0 && !u.origins.dyno && !u.stored.some((d) => d.id === 'idrive7-apps') &&
+                u.adopted.imported.indexOf('dyno') >= 0 && !u.origins.dyno && !u.stored.some((d) => d.id === 'cauliflowermossgrape_idrive7-apps') &&
                 comp('dyno').source === 'imported' && comp('dyno').status === 'installed', `${JSON.stringify(u.stored)} ${JSON.stringify(comp('dyno'))}`);
             u.server.close();
         });
@@ -6029,7 +6062,7 @@ function testFirstStart() {
 /* Default sources: added once to a unit's sources, never again once removed,
  * not doubled where the repo is a source already. */
 function testDefaultSources() {
-    const { Updater } = require('../js/updater');
+    const { Updater, repoId } = require('../js/updater');
     const D = path.join(T, 'defaults');
     mkdirp(D);
     const file = path.join(D, 'sources.json');
@@ -6042,8 +6075,8 @@ function testDefaultSources() {
         { id: 'idrive7-apps', type: 'github', repo: 'someone/idrive7-apps' }] }));
     let u = new Updater(conf());
     const added = stored()[2] || {};
-    ok('default sources: added at the next start, after the sources there, under a free id', stored().length === 3 &&
-        added.repo === 'cauliflowermossgrape/idrive7-apps' && added.channel === 'branch' && /^s-[0-9a-f]{4}$/.test(added.id) &&
+    ok('default sources: added at the next start, after the sources there, under its owner and repo', stored().length === 3 &&
+        added.repo === 'cauliflowermossgrape/idrive7-apps' && added.channel === 'branch' && added.id === 'cauliflowermossgrape_idrive7-apps' &&
         u.src.has(added.id) && u.stored.length === 3, JSON.stringify(stored()));
     u = new Updater(conf());
     ok('default sources: added once', stored().length === 3 && u.stored.length === 3);
@@ -6071,12 +6104,22 @@ function testDefaultSources() {
             { id: 's-1a2b', type: 'github', repo: 'CauliflowerMossGrape/IDrive7-Apps', channel: 'releases' }]) && u.stored.length === 2 &&
         JSON.parse(fs.readFileSync(path.join(D, 'state', 'default-sources.json'), 'utf8')).added.join() === 'cauliflowermossgrape/idrive7-apps',
         JSON.stringify(stored()));
+    // a GitHub source's id: its owner and repo; a removed source's id goes back to the same repo only
+    ok('source id: <owner>_<repo>, lowercased, a character an id has not as -', u.freeSourceId(repoId('Some.One/My.Apps'), 'Some.One/My.Apps') === 'some-one_my-apps' &&
+        u.freeSourceId(repoId('a-b/c'), 'a-b/c') !== u.freeSourceId(repoId('a/b-c'), 'a/b-c'));
+    u.origins.kept_app = { source: 'idrive-apps', commit: null, removed: 'Owner/IDrive-Apps' };
+    u.origins.old_app = { source: 'other_apps', commit: null };
+    ok('source id: a removed source\'s repo gets its id back, also a short one, whatever the case', u.freeSourceId(repoId('owner/idrive-apps'), 'owner/idrive-apps') === 'idrive-apps');
+    ok('source id: another repo gets its own, never an id an installed component\'s origin has', u.freeSourceId(repoId('other/idrive-apps'), 'other/idrive-apps') === 'other_idrive-apps' &&
+        /^s-[0-9a-f]{4}$/.test(u.freeSourceId(repoId('other/apps'), 'other/apps')));
+    delete u.origins.kept_app;
+    delete u.origins.old_app;
     // no sources.json: written with the built-in source and the default one
     fs.unlinkSync(file);
     fs.unlinkSync(path.join(D, 'state', 'default-sources.json'));
     u = new Updater(conf());
     ok('default sources: without sources.json, written with the built-in source first', stored().map((s) => `${s.id}:${s.repo}`).join() ===
-        'mgu-store:robertnisipeanu/mgu-store,idrive7-apps:cauliflowermossgrape/idrive7-apps', JSON.stringify(stored()));
+        'mgu-store:robertnisipeanu/mgu-store,cauliflowermossgrape_idrive7-apps:cauliflowermossgrape/idrive7-apps', JSON.stringify(stored()));
 }
 
 /* A default source of a repo whose catalog release is read through the API,
@@ -6137,17 +6180,17 @@ function testDefaultPrivate(certs) {
     return u.serve()
         .then(() => u.check())
         .then(() => {
-            ok('default sources: added under their repos\' names, read from their releases', JSON.stringify(u.stored.map((s) => [s.id, s.repo || null, s.channel || null])) ===
-                '[["mgu-store",null,null],["other-repo","owner/other-repo","releases"],["apps-repo","owner/apps-repo","releases"]]', JSON.stringify(u.stored));
-            ok('default sources: one of a repo still private needs a token; the others are read', src('apps-repo').status === 'auth-needed' &&
-                src('other-repo').status === 'ok' && src('mgu-store').status === 'ok' && !comp('lib-tool').id && !comp('hooked-tool').id,
+            ok('default sources: added under their owners and repos, read from their releases', JSON.stringify(u.stored.map((s) => [s.id, s.repo || null, s.channel || null])) ===
+                '[["mgu-store",null,null],["owner_other-repo","owner/other-repo","releases"],["owner_apps-repo","owner/apps-repo","releases"]]', JSON.stringify(u.stored));
+            ok('default sources: one of a repo still private needs a token; the others are read', src('owner_apps-repo').status === 'auth-needed' &&
+                src('owner_other-repo').status === 'ok' && src('mgu-store').status === 'ok' && !comp('lib-tool').id && !comp('hooked-tool').id,
                 JSON.stringify(st().sources));
             gh.repos[repo].private = false;
             return u.check();
         })
         .then(() => {
-            ok('default sources: once the repo is public it is read without a token', src('apps-repo').status === 'ok' && src('apps-repo').auth === null &&
-                comp('hooked-tool').source === 'apps-repo' && comp('hooked-tool').status === 'available', JSON.stringify([src('apps-repo'), comp('hooked-tool')]));
+            ok('default sources: once the repo is public it is read without a token', src('owner_apps-repo').status === 'ok' && src('owner_apps-repo').auth === null &&
+                comp('hooked-tool').source === 'owner_apps-repo' && comp('hooked-tool').status === 'available', JSON.stringify([src('owner_apps-repo'), comp('hooked-tool')]));
             return ask(conf.socket, { op: 'install', id: 'hooked-tool' });
         })
         .then((err) => until(st, () => !st().busy && !st().components.some((c) => c.queued) && comp('hooked-tool').status === 'installed',
@@ -6156,8 +6199,8 @@ function testDefaultPrivate(certs) {
             const order = fs.readFileSync(deployLog, 'utf8').split('\n').filter((l) => /^install/.test(l))
                 .map((l) => (/([a-z_-]+@\d+\.\d+\.\d+)\.tgz/.exec(l) || [])[1]);
             ok('default sources: a tool of its catalog installs with the library tool the same catalog lists', err === null &&
-                JSON.stringify(order) === '["lib-tool@0.1.0","hooked-tool@0.5.0"]' && u.origins['lib-tool'].source === 'apps-repo' &&
-                u.origins['hooked-tool'].source === 'apps-repo', `${err} ${JSON.stringify(order)}`);
+                JSON.stringify(order) === '["lib-tool@0.1.0","hooked-tool@0.5.0"]' && u.origins['lib-tool'].source === 'owner_apps-repo' &&
+                u.origins['hooked-tool'].source === 'owner_apps-repo', `${err} ${JSON.stringify(order)}`);
             u.server.close();
         });
 }
@@ -6870,8 +6913,8 @@ function testCarApps(certs) {
     fs.unlinkSync(path.join(M, 'state', 'default-sources.json'));
     u = new Updater(conf);
     const def = u.stored.find((d) => d.type === 'github' && d.repo === 'IterioDev/car-apps') || {};
-    ok('car-apps: added on its tags channel, beside the index source named car-apps, under a free id', def.channel === 'tags' &&
-        /^s-[0-9a-f]{4}$/.test(def.id) && u.stored.some((d) => d.id === 'car-apps' && d.type === 'https'), JSON.stringify(u.stored));
+    ok('car-apps: added on its tags channel, beside the index source named car-apps, under its owner and repo', def.channel === 'tags' &&
+        def.id === 'iteriodev_car-apps' && u.stored.some((d) => d.id === 'car-apps' && d.type === 'https'), JSON.stringify(u.stored));
     const st = () => u.state();
     const comp = (id) => st().components.find((c) => c.id === id) || {};
     const apiOf = (mark) => seen.slice(mark).filter((x) => /^api\.github\.com/.test(x.host) && x.url.indexOf('/repos/IterioDev/car-apps') === 0);
@@ -7001,6 +7044,136 @@ function testBlobCap() {
     ok('blob cap: drop empties the folder', kept() === '');
 }
 
+/* A client whose hello names a language gets that language's texts and
+ * its base language's; one that asks for progress gets a download's
+ * progress on its own; any other client the whole state, every language. */
+function testClientHello() {
+    const { Updater } = require('../js/updater');
+    const texts = { de: { title: 'D' }, pt: { title: 'P' }, 'pt-BR': { title: 'B' }, fr: { title: 'F' } };
+    const client = () => ({ lines: [], write(l) { this.lines.push(JSON.parse(l)); } });
+    const u = Object.assign(Object.create(Updater.prototype), {
+        conf: { store_app: 'robertn_store' }, storeTrial: null, clients: new Set(), said: new WeakMap(),
+        sendTimer: null, progressTimer: null, busy: null,
+        state: () => ({ type: 'state', busy: u.busy, components: [{ id: 'a', texts }, { id: 'b', texts: null }, { id: 'c', texts: { fr: {} } }] })
+    });
+    const plain = client();
+    const store = client();
+    const old = client();
+    [plain, store, old].forEach((c) => u.clients.add(c));
+    u.handle({ op: 'hello', id: 'robertn_store', version: '1.0.0', language: 'pt-BR', progress: true }, null, store);
+    u.handle({ op: 'hello', id: 'robertn_store', version: '0.9.0' }, null, old);
+    ok('hello: a new language gets the state at once, with its texts and its base language\'s',
+        store.lines.length === 1 && JSON.stringify(store.lines[0].components.map((c) => c.texts)) ===
+        JSON.stringify([{ 'pt-BR': { title: 'B' }, pt: { title: 'P' } }, null, null]) && !old.lines.length, JSON.stringify(store.lines));
+    u.busy = { id: 'a', phase: 'download', progress: 1, total: 10 };
+    u.progressed();
+    return sleep(400).then(() => {
+        ok('progress: on its own to a client that asked for it, the state to the others',
+            JSON.stringify(store.lines[1]) === JSON.stringify({ type: 'progress', busy: u.busy }) &&
+            [plain, old].every((c) => c.lines.length === 1 && c.lines[0].type === 'state' && c.lines[0].busy.progress === 1 &&
+                JSON.stringify(c.lines[0].components[0].texts) === JSON.stringify(texts)), JSON.stringify([store.lines, plain.lines]));
+        u.progressed();
+        u.changed();
+        return sleep(400);
+    }).then(() => {
+        ok('progress: a state on its way carries it', store.lines.length === 3 && store.lines[2].type === 'state' && plain.lines.length === 2,
+            JSON.stringify(store.lines.slice(2)));
+        u.handle({ op: 'hello', id: 'robertn_store', version: '1.0.0', language: 'pt-BR', progress: true }, null, store);
+        u.handle({ op: 'hello', id: 'robertn_store', version: '1.0.0', language: 'de', progress: true }, null, store);
+        ok('hello: the same language again sends nothing, another one the state with its texts', store.lines.length === 4 &&
+            JSON.stringify(store.lines[3].components[0].texts) === JSON.stringify({ de: { title: 'D' } }), JSON.stringify(store.lines.slice(3)));
+    });
+}
+
+/* What is installed is read again when its files move, also an app
+ * updated in place with its archive's time. */
+function testInstalledStamp() {
+    const { Updater } = require('../js/updater');
+    const dir = path.join(T, 'stamp');
+    const tools = path.join(dir, 'opt');
+    const oap = path.join(dir, 'oap');
+    mkdirp(path.join(tools, 'tool', 'v1'));
+    fs.writeFileSync(path.join(tools, 'tool', 'v1', 'component.json'), JSON.stringify({ id: 'tool', version: '1.0.0' }));
+    fs.symlinkSync('v1', path.join(tools, 'tool', 'current'));
+    mkdirp(path.join(oap, 'oap_12201', 'data', 'apps'));
+    mkdirp(path.join(oap, 'oap_5001', 'source'));
+    fs.writeFileSync(path.join(oap, 'oap_12201', 'data', 'apps', 'app.json'), JSON.stringify({ userId: 5001 }));
+    const pkg = path.join(oap, 'oap_5001', 'source', 'package.json');
+    fs.writeFileSync(pkg, JSON.stringify({ name: 'app', version: '1.0.0' }));
+    const u = Object.assign(Object.create(Updater.prototype), { conf: { tool_root: tools, oap_root: oap, mainapp_uid: 12201 } });
+    const a = u.installedStamp();
+    const same = u.installedStamp() === a;
+    const was = fs.statSync(pkg);
+    let b;
+    // each change past the file system's time step
+    return sleep(50).then(() => {
+        fs.writeFileSync(pkg, JSON.stringify({ name: 'app', version: '1.0.1' }));
+        fs.utimesSync(pkg, was.atime, was.mtime);
+        b = u.installedStamp();
+        return sleep(50);
+    }).then(() => {
+        mkdirp(path.join(tools, 'tool', 'v2'));
+        fs.writeFileSync(path.join(tools, 'tool', 'v2', 'component.json'), JSON.stringify({ id: 'tool', version: '1.0.0' }));
+        fs.unlinkSync(path.join(tools, 'tool', 'current'));
+        fs.symlinkSync('v2', path.join(tools, 'tool', 'current'));
+        const c = u.installedStamp();
+        ok('installed files: the same while nothing changes; they move with an app updated in place with its old time and a tool put in place again',
+            same && b !== a && c !== b, JSON.stringify([a, b, c]));
+    });
+}
+
+/* The deploy tool's status and app-privacy's check are asked again only
+ * when what their answers rest on moved (Updater.answers). */
+function testKeptAnswers() {
+    const { Updater } = require('../js/updater');
+    const d = path.join(T, 'kept');
+    const p = (n) => path.join(d, n);
+    mkdirp(p('proc'));
+    ['input', 'bundle', 'calls'].forEach((n) => fs.writeFileSync(p(n), n === 'calls' ? '' : 'a'));
+    fs.writeFileSync(p('boot'), 'boot-1\n');
+    const stamp = 'const s = (f) => { try { const t = fs.statSync(f); return t.size + ":" + t.mtime.getTime() + ":" + t.ctime.getTime() + ":" + t.ino; } catch (e) { return "-"; } };';
+    fs.writeFileSync(p('deploy.js'), `#!${process.execPath}\nconst fs = require("fs"); ${stamp}\nfs.appendFileSync(${JSON.stringify(p('calls'))}, "status\\n");\n` +
+        `const until = fs.existsSync(${JSON.stringify(p('until'))}) ? Number(fs.readFileSync(${JSON.stringify(p('until'))}, "utf8")) : null;\n` +
+        `console.log(JSON.stringify(Object.assign({ components: [] }, { inputs: { ${JSON.stringify(p('input'))}: s(${JSON.stringify(p('input'))}) } }, until ? { inputs_until: until } : {})));\n`, { mode: 0o755 });
+    fs.writeFileSync(p('privacy.js'), `const fs = require("fs"); fs.appendFileSync(${JSON.stringify(p('calls'))}, "check\\n");\n` +
+        `console.log(JSON.stringify({ state: "patched", restartNeeded: false, files: [{ path: ${JSON.stringify(p('bundle'))} }] }));\n`);
+    const u = { conf: { deploy: p('deploy.js'), privacy_tool: p('privacy.js'), boot_id: p('boot'), proc: p('proc') }, answersKept: { status: null, privacy: null } };
+    const calls = () => {
+        const l = fs.readFileSync(p('calls'), 'utf8').split('\n').filter(Boolean);
+        return `${l.filter((x) => x === 'status').length}/${l.filter((x) => x === 'check').length}`;
+    };
+    const ask = (force) => Updater.prototype.answers.call(u, force).then(([st, pr]) => !!st && pr.state === 'patched');
+    const later = () => new Promise((r) => setTimeout(r, 20));
+    // a check's answer is kept once its files are older than the second before it ran
+    const settled = () => new Promise((r) => setTimeout(r, 1100));
+    const steps = [
+        ['the first refresh asks both; the check\'s new files keep it from being kept', () => null, '1/1'],
+        ['once they are older, the check\'s answer is kept', settled, '1/2'],
+        ['then neither is asked while nothing moved', () => null, '1/2'],
+        ['a file the deploy tool read that changed asks it again', () => fs.writeFileSync(p('input'), 'bb'), '2/2'],
+        ['a bundle the check read that changed asks it again', () => fs.writeFileSync(p('bundle'), 'bb'), '2/3'],
+        ['and again until it has settled, then it is kept', settled, '2/4'],
+        ['kept', () => null, '2/4'],
+        ['another app manager process asks both again', () => {
+            mkdirp(p('proc/4242'));
+            fs.writeFileSync(p('proc/4242/cmdline'), '/usr/bin/node\0/usr/lib/oap-mainapp/src/main.js\0');
+            fs.writeFileSync(p('proc/4242/stat'), '4242 (node) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0');
+        }, '3/5'],
+        ['another start of the head unit asks both again', () => fs.writeFileSync(p('boot'), 'boot-2\n'), '4/6'],
+        ['an answer past its inputs_until is not kept', () => {
+            fs.writeFileSync(p('until'), String(Date.now() - 1));
+            fs.writeFileSync(p('input'), 'ccc');
+        }, '5/6'],
+        ['nor used', () => null, '6/6'],
+        ['force asks both', () => fs.unlinkSync(p('until')), '7/7', true]
+    ];
+    let chain = Promise.resolve();
+    steps.forEach(([what, change, want, force]) => {
+        chain = chain.then(later).then(change).then(() => ask(force)).then((good) => ok(`kept answers: ${what}`, good && calls() === want, calls()));
+    });
+    return chain;
+}
+
 function main() {
     const certs = makeCerts();
     const pubDir = path.join(T, 'pub');
@@ -7010,7 +7183,10 @@ function main() {
     testCollect();
     testFileLog();
     testBlobCap();
-    return testRequiredAlone()
+    return testInstalledStamp()
+        .then(() => testKeptAnswers())
+        .then(() => testRequiredAlone())
+        .then(() => testClientHello())
         .then(() => testContent())
         .then(() => testTar())
         .then(() => testDeployTimeout())

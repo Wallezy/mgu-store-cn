@@ -1,6 +1,15 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.49",
+      "upstreamVersion": "0.9.45",
+      "cnRevision": 1,
+      "changes": [
+        "优化更新进度显示和来源识别。",
+        "完善局部界面刷新，保留国内来源与中文设置。"
+      ]
+    },
+    {
       "version": "0.9.48",
       "changes": [
         "安装、更新或卸载期间禁用重启按钮，避免误操作。"
@@ -68,6 +77,15 @@
     }
   ],
   "mgu-updater": [
+    {
+      "version": "0.8.63",
+      "upstreamVersion": "0.8.62",
+      "cnRevision": 1,
+      "changes": [
+        "改进来源识别、检查进度和界面语言处理。",
+        "更新服务自更新后继续处理待更新队列。"
+      ]
+    },
     {
       "version": "0.8.54",
       "changes": [
@@ -140,6 +158,15 @@
   ],
   "mgu-deploy": [
     {
+      "version": "0.8.32",
+      "upstreamVersion": "0.8.31",
+      "cnRevision": 1,
+      "changes": [
+        "完善启动检查与更新锁处理。",
+        "连续回退时保留最后一个验证通过的版本。"
+      ]
+    },
+    {
       "version": "0.8.28",
       "changes": [
         "改进安装、卸载与断电恢复，减少存储写入。",
@@ -203,6 +230,14 @@
   ],
   "mgu-render": [
     {
+      "version": "0.6.29",
+      "upstreamVersion": "0.6.26",
+      "cnRevision": 1,
+      "changes": [
+        "减少重复画面传输，优化绘制效率。"
+      ]
+    },
+    {
       "version": "0.6.28",
       "changes": [
         "支持 NV12 视频帧，保留现有触控和中文显示兼容。"
@@ -263,6 +298,15 @@
   ],
   "mgu-uplink": [
     {
+      "version": "0.7.16",
+      "upstreamVersion": "0.7.15",
+      "cnRevision": 1,
+      "changes": [
+        "自动查找已保存的无线网络，改善联网恢复。",
+        "保留 CarPlay 与安卓投屏的无线频段保护。"
+      ]
+    },
+    {
       "version": "0.7.14",
       "changes": [
         "网络参数未变化时减少重复写入，保留正常联网恢复。"
@@ -280,6 +324,14 @@
     }
   ],
   "app-privacy": [
+    {
+      "version": "1.7.6",
+      "upstreamVersion": "1.7.5",
+      "cnRevision": 1,
+      "changes": [
+        "兼容更多固件的应用启动与隐私保护。"
+      ]
+    },
     {
       "version": "1.7.3",
       "changes": [

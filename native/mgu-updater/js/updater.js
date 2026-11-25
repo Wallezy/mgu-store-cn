@@ -59,6 +59,8 @@ const REBOOT_MIN_UPTIME_S = Number(process.env.MGU_UPDATER_REBOOT_MIN_UPTIME_S |
 const REBOOT_SPACING_MS = 10 * 60 * 1000;
 const REBOOT_HOUR_MAX = 3;
 const HOUR_MS = 60 * 60 * 1000;
+// a check the updater starts itself asks the deploy tool again only when its last answer is older
+const REFRESH_FRESH_MS = 120000;
 // how long after the start that put an app in place (iDrive 8) MainApp may take to list it
 const PLACED_GRACE_MS = 5 * 60 * 1000;
 // A Store this new or newer says hello when it connects; its update stands once it has (storeTrial).
@@ -336,6 +338,26 @@ function readJson(file) {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+// a language code a client's hello may name (the catalog texts' keys: de, pt-BR, zh-TW)
+const LANGUAGE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+/* st with each component's texts cut to language and its base language
+ * (pt for pt-BR), null where it has neither; st itself without a language. */
+function textsIn(st, language) {
+    if (!language) {
+        return st;
+    }
+    const keys = [language, language.split('-')[0]];
+    return Object.assign({}, st, { components: st.components.map((c) => {
+        if (!c.texts) {
+            return c;
+        }
+        const texts = keys.filter((k) => Object.prototype.hasOwnProperty.call(c.texts, k))
+            .reduce((o, k) => Object.assign(o, { [k]: c.texts[k] }), {});
+        return Object.assign({}, c, { texts: Object.keys(texts).length ? texts : null });
+    }) });
+}
+
 function sha256(buf) {
     return crypto.createHash('sha256').update(buf).digest('hex');
 }
@@ -610,10 +632,11 @@ function providersOf(st) {
     return out;
 }
 
-/* The app-privacy patch's state (native/app-privacy/INTEGRATION.md §5):
- * patched (in effect), restart-needed (patched, but the running MainApp
- * started before the bundles were written), unpatched, mismatch, unknown
- * (the tool gave no answer), or null without the tool. */
+/* app-privacy's check: { state, files }, or null without the tool. state:
+ * the patch's (native/app-privacy/INTEGRATION.md §5), patched (in effect),
+ * restart-needed (patched, but the running MainApp started before the
+ * bundles were written), unpatched, mismatch or unknown (the tool gave no
+ * answer); files: the bundles it read. */
 function privacyState(conf) {
     if (!conf.privacy_tool || !fs.existsSync(conf.privacy_tool)) {
         return Promise.resolve(null);
@@ -623,9 +646,10 @@ function privacyState(conf) {
             (err, stdout) => {
                 try {
                     const r = JSON.parse(String(stdout).trim().split('\n').pop());
-                    resolve(r.state === 'patched' && r.restartNeeded ? 'restart-needed' : r.state || 'unknown');
+                    resolve({ state: r.state === 'patched' && r.restartNeeded ? 'restart-needed' : r.state || 'unknown',
+                        files: Array.isArray(r.files) && r.files.every((f) => f && typeof f.path === 'string') ? r.files.map((f) => f.path) : null });
                 } catch (e) {
-                    resolve('unknown');
+                    resolve({ state: 'unknown', files: null });
                 }
             });
     });
@@ -653,6 +677,7 @@ const CACHE_ONE = 256 << 10;
 // what the RAM scratch leaves free on its file system; amounts up to SCRATCH_SMALL need no df
 const SCRATCH_RESERVE = 64 << 20;
 const SCRATCH_SMALL = 1 << 20;
+const SCRATCH_DF_MS = 5000;
 
 function memAvailable() {
     try {
@@ -685,6 +710,8 @@ class Scratch {
         this.conf = conf;
         this.used = 0;
         this.own = null;
+        // the last free-space reading (free)
+        this.read = null;
     }
 
     get dir() {
@@ -733,7 +760,19 @@ class Scratch {
         if (bytes <= SCRATCH_SMALL) {
             return true;
         }
-        return total <= memAvailable() / 4 && bytes <= freeBytes(own ? this.dir : path.dirname(this.dir)) - (own ? 0 : SCRATCH_RESERVE);
+        return total <= memAvailable() / 4 && bytes <= this.free(own ? this.dir : path.dirname(this.dir)) - (own ? 0 : SCRATCH_RESERVE);
+    }
+
+    /* freeBytes(dir), read at most every SCRATCH_DF_MS: a download burst
+     * takes its room from one reading, less what it has taken since. */
+    free(dir) {
+        const now = Date.now();
+        const r = this.read;
+        if (!r || r.dir !== dir || now - r.at >= SCRATCH_DF_MS || now < r.at) {
+            this.read = { dir, at: now, bytes: freeBytes(dir), used: this.used };
+            return this.read.bytes;
+        }
+        return r.bytes - Math.max(0, this.used - r.used);
     }
 
     take(bytes) {
@@ -752,8 +791,92 @@ class Scratch {
     }
 }
 
-/* Downloads run in a child as the fetch uid, each into a folder of its own
- * that root makes in state_dir and hands to that uid. Root reads the result
+/* The fetch child (fetch.js serve) the downloads of a burst share, as one
+ * uid: started for the first, ended FETCH_IDLE_MS after the last.
+ * run(msg, onEvent, onEnd): onEvent(ev) for each of the job's events
+ * until onEnd(final event); onEnd(null, error or null) when the child
+ * ends first. */
+const FETCH_IDLE_MS = 10000;
+class FetchWorker {
+    constructor(opts) {
+        this.uid = opts.uid;
+        this.jobs = new Map();
+        this.n = 0;
+        this.ended = false;
+        this.idle = null;
+        this.onOther = () => {};
+        this.child = cp.spawn(process.execPath, [path.join(HERE, 'fetch.js'), 'serve'],
+            Object.assign({ stdio: ['pipe', 'pipe', 'inherit'], cwd: '/', env: {} }, opts));
+        let buf = '';
+        this.child.stdout.setEncoding('utf8');
+        this.child.stdout.on('data', (d) => {
+            buf += d;
+            let nl;
+            while ((nl = buf.indexOf('\n')) >= 0) {
+                const line = buf.slice(0, nl);
+                buf = buf.slice(nl + 1);
+                let ev;
+                try {
+                    ev = JSON.parse(line);
+                } catch (e) {
+                    continue;
+                }
+                const job = this.jobs.get(ev.id);
+                if (!job) {
+                    this.onOther(ev);
+                } else if (!ev.retry && (ev.error || ev.removed || ((ev.done || ev.notModified) && ev.file === undefined))) {
+                    this.drop(ev.id);
+                    job.onEnd(ev);
+                } else {
+                    job.onEvent(ev);
+                }
+            }
+        });
+        const gone = (err) => {
+            this.ended = true;
+            clearTimeout(this.idle);
+            const left = Array.from(this.jobs.values());
+            this.jobs.clear();
+            left.forEach((j) => j.onEnd(null, err instanceof Error ? err : null));
+        };
+        this.child.on('error', gone);
+        this.child.on('close', gone);
+        this.child.stdin.on('error', () => {});
+    }
+
+    run(msg, onEvent, onEnd) {
+        const id = ++this.n;
+        clearTimeout(this.idle);
+        this.jobs.set(id, { onEvent, onEnd });
+        this.child.stdin.write(JSON.stringify(Object.assign({ id }, msg)) + '\n');
+        return id;
+    }
+
+    /* Stops waiting for job id (its events are no longer read). */
+    drop(id) {
+        this.jobs.delete(id);
+        if (!this.jobs.size && !this.ended) {
+            clearTimeout(this.idle);
+            this.idle = setTimeout(() => this.end(), FETCH_IDLE_MS);
+        }
+    }
+
+    end() {
+        clearTimeout(this.idle);
+        this.ended = true;
+        this.child.stdin.end();
+    }
+
+    /* Stops the child and every job in it. */
+    kill() {
+        this.ended = true;
+        this.child.kill('SIGKILL');
+    }
+}
+
+/* Downloads run in a child as the fetch uid (FetchWorker: one for the
+ * downloads close together), each into a folder of its own that root makes
+ * in state_dir and hands to that uid. Root reads the result
  * only through a descriptor opened without following links and checked to
  * be a regular file of bounded size, and removes the folder's contents as
  * the fetch uid, so nothing that uid plants there leads root anywhere. */
@@ -803,14 +926,47 @@ class Fetcher {
     /* Removes a download folder as the fetch uid; done() once it is gone, or failed to go. */
     retire(dir, done) {
         const end = done || (() => {});
-        cp.spawn('rm', ['-rf', dir], this.asFetchUid({ stdio: 'ignore' }))
+        const removed = () => {
+            try {
+                fs.rmdirSync(dir);
+            } catch (e) { /* gone, or refilled since: the next start retries */ }
+            end();
+        };
+        const rm = () => cp.spawn('rm', ['-rf', dir], this.asFetchUid({ stdio: 'ignore' }))
             .on('error', () => end())
-            .on('close', () => {
-                try {
-                    fs.rmdirSync(dir);
-                } catch (e) { /* gone, or refilled since: the next start retries */ }
-                end();
-            });
+            .on('close', removed);
+        const w = this.w;
+        if (w && !w.ended && w.uid === this.asFetchUid({}).uid) {
+            // a child that ends first leaves it to rm
+            w.run({ remove: dir }, () => {}, (ev) => (ev ? removed() : rm()));
+            return;
+        }
+        rm();
+    }
+
+    /* Ends the fetch child, with whatever still runs in it. */
+    stop() {
+        if (this.w && !this.w.ended) {
+            this.w.kill();
+        }
+    }
+
+    /* The fetch child for the next download: the one running, while it
+     * runs as the fetch uid, else a new one. */
+    worker() {
+        const opts = this.asFetchUid({});
+        if (!this.w || this.w.ended || this.w.uid !== opts.uid) {
+            if (this.w && !this.w.ended) {
+                this.w.end();
+            }
+            this.w = new FetchWorker(opts);
+            this.w.onOther = (ev) => {
+                if (ev.certDates) {
+                    this.datesIgnored(ev.certDates, ev.error);
+                }
+            };
+        }
+        return this.w;
     }
 
     /* Download folders an earlier run left. */
@@ -940,77 +1096,75 @@ class Fetcher {
         const files = job.files && job.files.map((f, i) => Object.assign({}, f, { dest: path.join(dir, String(i)) }));
         const got = files && [];
         return new Promise((resolve, reject) => {
-            const child = cp.spawn(process.execPath, [path.join(HERE, 'fetch.js')],
-                this.asFetchUid({ stdio: ['pipe', 'pipe', 'inherit'], cwd: dir, env: {} }));
+            const w = this.worker();
             let result = null;
-            let buf = '';
-            child.stdout.setEncoding('utf8');
-            child.stdout.on('data', (d) => {
-                buf += d;
-                let nl;
-                while ((nl = buf.indexOf('\n')) >= 0) {
-                    const line = buf.slice(0, nl);
-                    buf = buf.slice(nl + 1);
-                    let ev;
-                    try {
-                        ev = JSON.parse(line);
-                    } catch (e) {
-                        continue;
-                    }
-                    if (files && ev.file !== undefined && ev.done) {
-                        // read as it comes: what a later failure leaves is not needed
-                        try {
-                            got[ev.file] = Object.assign(this.collect(files[ev.file].dest, files[ev.file].maxBytes),
-                                { headers: ev.headers || {}, resumed: !!ev.resumed });
-                            if (onProgress) {
-                                onProgress(ev.file, ev.bytes, ev.bytes);
-                            }
-                        } catch (err) {
-                            result = { error: err.message };
-                            child.kill();
-                        }
-                    } else if (ev.progress !== undefined && onProgress) {
-                        if (files) {
-                            onProgress(ev.file, ev.progress, ev.total || null);
-                        } else {
-                            onProgress(ev.progress, ev.total || maxBytes || null);
-                        }
-                    } else if (ev.certDates) {
-                        this.datesIgnored(ev.certDates, ev.error);
-                    } else if (ev.retry) {
-                        console.log(`fetch: ${files && ev.file !== undefined && files[ev.file] ? files[ev.file].name : name}: ${ev.error}; trying again in ${ev.after / 1000} s` +
-                            `${ev.from ? ` from byte ${ev.from}` : ''}`);
-                    } else if ((ev.done || ev.error || ev.notModified) && !(result && result.error)) {
-                        result = ev;
-                        if (this.conf.proxy) {
-                            this.noteProxy(ev.error && /^proxy /.test(ev.error) ? ev.error : ev.error ? this.proxyError : null);
-                        }
-                    }
+            let settled = false;
+            let id = null;
+            const settle = (err) => {
+                if (settled) {
+                    return;
                 }
-            });
-            child.on('error', reject);
-            child.on('close', () => {
-                if (result && result.notModified) {
+                settled = true;
+                if (err) {
+                    reject(err);
+                } else if (result && result.notModified) {
                     resolve(Object.assign(Buffer.alloc(0), { headers: result.headers || {}, notModified: true }));
                 } else if (result && result.done && files) {
                     resolve(got);
                 } else if (result && result.done) {
                     try {
                         resolve(Object.assign(this.collect(dest, maxBytes), { headers: result.headers || {}, resumed: !!result.resumed }));
-                    } catch (err) {
-                        reject(err);
+                    } catch (e) {
+                        reject(e);
                     }
                 } else {
                     reject(Object.assign(new Error(result && result.error || 'download failed'),
                         result && result.status ? { status: result.status } : {}, result && result.rateLimited ? { rateLimited: true } : {},
                         result && result.tooBig ? { tooBig: true } : {}));
                 }
-            });
-            child.stdin.end(JSON.stringify({ url, headers, dest, maxBytes, dns: lease.dns, lease: this.conf.lease || undefined, ca: this.ca,
+            };
+            const onEvent = (ev) => {
+                if (files && ev.file !== undefined && ev.done) {
+                    // read as it comes: what a later failure leaves is not needed
+                    try {
+                        got[ev.file] = Object.assign(this.collect(files[ev.file].dest, files[ev.file].maxBytes),
+                            { headers: ev.headers || {}, resumed: !!ev.resumed });
+                        if (onProgress) {
+                            onProgress(ev.file, ev.bytes, ev.bytes);
+                        }
+                    } catch (e) {
+                        // nothing more of what that uid wrote is read: the child goes, with the downloads beside it
+                        result = { error: e.message };
+                        w.drop(id);
+                        w.kill();
+                        settle();
+                    }
+                } else if (ev.progress !== undefined && onProgress) {
+                    if (files) {
+                        onProgress(ev.file, ev.progress, ev.total || null);
+                    } else {
+                        onProgress(ev.progress, ev.total || maxBytes || null);
+                    }
+                } else if (ev.retry) {
+                    console.log(`fetch: ${files && ev.file !== undefined && files[ev.file] ? files[ev.file].name : name}: ${ev.error}; trying again in ${ev.after / 1000} s` +
+                        `${ev.from ? ` from byte ${ev.from}` : ''}`);
+                }
+            };
+            const onEnd = (ev, err) => {
+                if (ev) {
+                    result = ev;
+                    if (this.conf.proxy && !job.quiet) {
+                        this.noteProxy(ev.error && /^proxy /.test(ev.error) ? ev.error : ev.error ? this.proxyError : null);
+                    }
+                }
+                settle(err);
+            };
+            id = w.run({ job: { url, headers, dest, maxBytes, dns: lease.dns, lease: this.conf.lease || undefined, ca: this.ca,
                 method: job.method || 'GET', body: job.body, keep: job.keep || [], proxy: this.conf.proxy || undefined,
                 denyGithub: cnSources.enabled(this.conf),
                 immutable: !!job.immutable, fresh: !!(job.fresh || this.fresh),
-                files: files ? files.map((f) => ({ url: f.url, dest: f.dest, maxBytes: f.maxBytes })) : undefined, parallel: job.parallel }));
+                files: files ? files.map((f) => ({ url: f.url, dest: f.dest, maxBytes: f.maxBytes })) : undefined, parallel: job.parallel } },
+            onEvent, onEnd);
         }).then((bytes) => {
             this.retire(dir, room.release);
             return bytes;
@@ -1034,6 +1188,12 @@ const REPLACED = { [APP_MANAGER]: 'Replaced by Store', 'ipheth-tether': 'Replace
 const IMPORTED = 'imported';
 // the repository whose own installer (deploy/mgu-app-install.sh) the deploy tool recognises
 const IDRIVE7_REPO = 'cauliflowermossgrape/idrive7-apps';
+
+/* A GitHub repo's source id: <owner>_<repo>, lowercased, any other
+ * character an id has not as - (a GitHub owner has no _). */
+function repoId(repo) {
+    return String(repo).toLowerCase().replace('/', '_').replace(/[^a-z0-9_-]/g, '-');
+}
 
 /* entry as it installs under id, its own id as listedId (Updater.place). */
 function under(entry, id) {
@@ -1094,28 +1254,68 @@ function storeTileShows(conf) {
  * own (it creates it at its first start after a factory reset), and node
  * runs its main.js (oap-mainapp on iDrive 7, oap-mainapp21 on iDrive 8). */
 function mainappReady(conf) {
-    const proc = conf.proc || '/proc';
     try {
-        if (fs.statSync(path.join(conf.oap_root, `oap_${conf.mainapp_uid}`, 'data')).uid !== Number(conf.mainapp_uid)) {
-            return false;
-        }
-        return fs.readdirSync(proc).filter((n) => /^\d+$/.test(n)).some((pid) => {
-            try {
-                const argv = fs.readFileSync(path.join(proc, pid, 'cmdline'), 'utf8').split('\0');
-                let i = 1;
-                for (; i < argv.length && argv[i].charAt(0) === '-'; i++) {
-                    if (argv[i] === '-r' || argv[i] === '--require') {
-                        i++;
-                    }
-                }
-                const script = argv[i] || '';
-                return /(^|\/)node$/.test(argv[0]) && /\/oap-mainapp(21)?\/src\/main\.js$/.test(script);
-            } catch (e) {
-                return false;
-            }
-        });
+        return fs.statSync(path.join(conf.oap_root, `oap_${conf.mainapp_uid}`, 'data')).uid === Number(conf.mainapp_uid) &&
+            mainappProcess(conf) !== '-';
     } catch (e) {
         return false;
+    }
+}
+
+/* The app manager's process (node running its main.js) as "<pid>:<start
+ * time>", '-' without one. */
+function mainappProcess(conf) {
+    const proc = conf.proc || '/proc';
+    let names = [];
+    try {
+        names = fs.readdirSync(proc).filter((n) => /^\d+$/.test(n));
+    } catch (e) {
+        return '-';
+    }
+    for (const pid of names) {
+        try {
+            const argv = fs.readFileSync(path.join(proc, pid, 'cmdline'), 'utf8').split('\0');
+            let i = 1;
+            for (; i < argv.length && argv[i].charAt(0) === '-'; i++) {
+                if (argv[i] === '-r' || argv[i] === '--require') {
+                    i++;
+                }
+            }
+            const script = argv[i] || '';
+            if (/(^|\/)node$/.test(argv[0]) && /\/oap-mainapp(21)?\/src\/main\.js$/.test(script)) {
+                let start = '';
+                try {
+                    const stat = fs.readFileSync(path.join(proc, pid, 'stat'), 'utf8');
+                    start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] || '';
+                } catch (e) { /* the cmdline alone */ }
+                return `${pid}:${start}`;
+            }
+        } catch (e) { /* gone meanwhile */ }
+    }
+    return '-';
+}
+
+/* A file's stamp as the deploy tool's status inputs give it (deploy/README.md,
+ * "status"): size:mtime:ctime:inode (ms) as lstat gives them, for a link
+ * followed by '>' and its target's ('>-' when it leads nowhere), '-' when
+ * absent; /proc/mounts the sha256 of its text. */
+function inputStamp(p) {
+    const one = (st) => `${st.size}:${st.mtime.getTime()}:${st.ctime.getTime()}:${st.ino}`;
+    try {
+        if (p === '/proc/mounts') {
+            return sha256(fs.readFileSync(p)).slice(0, 16);
+        }
+        const st = fs.lstatSync(p);
+        if (!st.isSymbolicLink()) {
+            return one(st);
+        }
+        try {
+            return `${one(st)}>${one(fs.statSync(p))}`;
+        } catch (e) {
+            return `${one(st)}>-`;
+        }
+    } catch (e) {
+        return '-';
     }
 }
 
@@ -1233,8 +1433,17 @@ class Updater {
         this.adoptTried = false;
         this.privacy = null;
         this.clients = new Set();
+        // what each client said in its hello: { language, progress }
+        this.said = new WeakMap();
         this.checking = null;
+        // when refresh() last had the deploy tool's answer (epoch ms)
+        this.refreshedAt = 0;
+        // the deploy tool's and app-privacy's answers as kept (answers)
+        this.answersKept = { status: null, privacy: null };
         this.sendTimer = null;
+        this.progressTimer = null;
+        // the files read while one state is made, each read once (state)
+        this.reads = null;
         this.rebooting = false;
         this.rebootError = null;
         this.rebootErrorTimer = null;
@@ -1361,10 +1570,27 @@ class Updater {
         list.forEach((def) => this.addRuntime(def));
     }
 
-    /* A source id from want (a repo's name) when it is free, else s-<random>. */
-    freeSourceId(want) {
-        const taken = (id) => this.stored.concat(this.cnExcludedSources || []).some((s) => s.id === id);
+    /* A source's id: the id a removed source of the same repo or URL (from)
+     * had, so what it installed is its own again; else want when no source
+     * and no installed component's origin has it; else s-<random>. */
+    freeSourceId(want, from) {
+        const same = String(from).toLowerCase();
+        const was = Object.keys(this.origins).map((c) => this.origins[c])
+            .find((o) => typeof o.removed === 'string' && o.removed.toLowerCase() === same && !this.stored.some((s) => s.id === o.source));
+        if (was) {
+            return was.source;
+        }
+        const taken = (id) => this.stored.concat(this.cnExcludedSources || []).some((s) => s.id === id) || Object.keys(this.origins).some((c) => this.origins[c].source === id);
         return want && ID.test(want) && !taken(want) ? want : `s-${crypto.randomBytes(2).toString('hex')}`;
+    }
+
+    /* The origins kept from a removed source of def's id are def's again. */
+    reclaimOrigins(def) {
+        const kept = Object.keys(this.origins).filter((c) => this.origins[c].source === def.id && this.origins[c].removed);
+        kept.forEach((c) => delete this.origins[c].removed);
+        if (kept.length) {
+            this.saveOrigins();
+        }
     }
 
     /* The default sources (default_sources: <owner>/<repo>[:<channel>] ...),
@@ -1394,7 +1620,7 @@ class Updater {
             const i = w.indexOf(':');
             const repo = i < 0 ? w : w.slice(0, i);
             if (!list.some((s) => s.type === 'github' && s.repo.toLowerCase() === repo.toLowerCase())) {
-                const def = { id: this.freeSourceId(repo.split('/')[1] && repo.split('/')[1].toLowerCase()), type: 'github', repo };
+                const def = { id: this.freeSourceId(repoId(repo), repo), type: 'github', repo };
                 if (i >= 0) {
                     def.channel = w.slice(i + 1);
                 }
@@ -1418,6 +1644,7 @@ class Updater {
             return;
         }
         defs.forEach((def) => {
+            this.reclaimOrigins(def);
             this.addRuntime(def);
             console.log(`source ${def.id}: added as a default source (${sourcesLib.label(def)}${def.channel ? `, ${def.channel}` : ''})`);
         });
@@ -1492,7 +1719,9 @@ class Updater {
     /* The origin a source stands for: a stick folder mgu-install.js
      * usb-repo wrote from a stored source (its copyOf, mgu-copy.json:
      * github:<owner>/<repo> or the catalog's URL) stands for that source;
-     * any other source for itself. */
+     * a folder mgu-repo/<name> without one for the stored source <name>, or
+     * the only stored GitHub source of repo <name>; any other source for
+     * itself. */
     originOf(id) {
         const rt = this.src.get(id);
         const copy = rt && rt.def.type === 'usb' && rt.copyOf ? rt.copyOf.toLowerCase() : null;
@@ -1501,12 +1730,15 @@ class Updater {
         const def = copy && this.stored.find((d) => (d.type === 'github' ? `github:${d.repo}` : d.url || '').toLowerCase() === copy ||
             (cnGroup && cnSources.groupOf(d) === cnGroup));
         const folder = !copy && /^usb:[^/]*\/mgu-repo\/([^/]+)$/.exec(id);
-        return def ? def.id : folder && this.stored.some((d) => d.id === folder[1]) ? folder[1] : id;
+        const named = folder ? this.stored.filter((d) => d.type === 'github' && d.repo.split('/')[1].toLowerCase() === folder[1]) : [];
+        return def ? def.id : folder && this.stored.some((d) => d.id === folder[1]) ? folder[1] : named.length === 1 ? named[0].id : id;
     }
 
+    /* A source's repo or URL, also once it is removed (its id when unknown). */
     sourceLabel(id) {
         const def = this.defs().find((d) => d.id === id);
-        return def ? sourcesLib.label(def) : id;
+        const gone = !def && Object.keys(this.origins).map((c) => this.origins[c]).find((o) => o.source === id && typeof o.removed === 'string');
+        return def ? sourcesLib.label(def) : gone ? gone.removed : id;
     }
 
     /* The origin that updates an installed id whose own origin lists it no
@@ -1553,7 +1785,7 @@ class Updater {
      * before: itself, the deploy tool, the Store and what the updater
      * requires. */
     kept() {
-        return [SELF, this.conf.deploy_tool, this.conf.store_app].concat(Object.keys(selfComponent().requires || {}));
+        return this.once('kept', () => [SELF, this.conf.deploy_tool, this.conf.store_app].concat(Object.keys(selfComponent().requires || {})));
     }
 
     /* The ids the updater never removes: kept, and the other tools the
@@ -1597,6 +1829,10 @@ class Updater {
      * installed. An installed id without an origin, or whose origin lists it
      * no more, is a row of its own (unlisted). */
     resolved() {
+        return this.once('resolved', () => this.resolveNow());
+    }
+
+    resolveNow() {
         const online = readLease(this.conf).online;
         const groups = new Map();
         const taken = new Set(Object.keys(this.aliases).map((k) => this.aliases[k]));
@@ -1756,13 +1992,60 @@ class Updater {
         return tools.concat(apps).filter(Boolean).map((c) => `${c.kind}:${c.id}@${c.version}`).join();
     }
 
+    /* The files installedNow reads, as one line of their size, times and
+     * inode (the change time also for a file written in place with its
+     * archive's time): it moves whenever what they say can. An app's
+     * registry file is read again only when it moves (it names the app's
+     * home). */
+    installedStamp() {
+        const stamp = (file) => {
+            try {
+                const st = fs.statSync(file);
+                return `${st.size}:${st.mtime.getTime()}:${st.ctime.getTime()}:${st.ino}`;
+            } catch (e) {
+                return '-';
+            }
+        };
+        const names = (dir) => {
+            try {
+                return fs.readdirSync(dir).sort();
+            } catch (e) {
+                return [];
+            }
+        };
+        const registry = path.join(this.conf.oap_root, `oap_${this.conf.mainapp_uid}`, 'data', 'apps');
+        const kept = this.appPackages || new Map();
+        this.appPackages = new Map();
+        const tools = names(this.conf.tool_root).map((id) => `${id}=${stamp(path.join(this.conf.tool_root, id, 'current', 'component.json'))}`);
+        const apps = names(registry).filter((f) => /\.json$/.test(f)).map((f) => {
+            const entry = stamp(path.join(registry, f));
+            let pkg = kept.get(f);
+            if (!pkg || pkg.entry !== entry) {
+                let file = null;
+                try {
+                    file = path.join(appHome(this.conf, f.slice(0, -5)), 'source', 'package.json');
+                } catch (e) { /* no home named */ }
+                pkg = { entry, file };
+            }
+            this.appPackages.set(f, pkg);
+            return `${f}=${entry}:${pkg.file ? stamp(pkg.file) : '-'}`;
+        });
+        return tools.concat(apps).join();
+    }
+
     /* A change to what is installed made outside the updater (the deploy
      * tool run by hand): the deploy tool asked again and the state sent.
-     * Changes while the updater works go out with its own state. */
+     * Changes while the updater works go out with its own state. What is
+     * installed is read only when its files moved (installedStamp). */
     watchInstalled() {
         if (this.watchingInstalled) {
             return;
         }
+        const stamp = this.installedStamp();
+        if (stamp === this.installedStamped) {
+            return;
+        }
+        this.installedStamped = stamp;
         const now = this.installedNow();
         const seen = this.installedSeen;
         this.installedSeen = now;
@@ -1795,13 +2078,26 @@ class Updater {
     }
 
     installedOf(id, kind, wantTitle) {
-        if (kind === 'app') {
-            return installedApp(this.conf, id, wantTitle);
+        return this.once(`installed\0${id}\0${kind}\0${!!wantTitle}`, () => {
+            if (kind === 'app') {
+                return installedApp(this.conf, id, wantTitle);
+            }
+            if (kind === 'tool') {
+                return installedTool(this.conf, id);
+            }
+            return installedApp(this.conf, id) || installedTool(this.conf, id);
+        });
+    }
+
+    /* fn's value, made once per key while a state is made (state), else each time. */
+    once(key, fn) {
+        if (!this.reads) {
+            return fn();
         }
-        if (kind === 'tool') {
-            return installedTool(this.conf, id);
+        if (!this.reads.has(key)) {
+            this.reads.set(key, fn());
         }
-        return installedApp(this.conf, id) || installedTool(this.conf, id);
+        return this.reads.get(key);
     }
 
     sourceState(def) {
@@ -1822,7 +2118,18 @@ class Updater {
         };
     }
 
+    /* The state every client gets (README.md, "The socket"). The files it
+     * reads are read once while it is made. */
     state() {
+        this.reads = new Map();
+        try {
+            return this.makeState();
+        } finally {
+            this.reads = null;
+        }
+    }
+
+    makeState() {
         const all = this.resolved();
         const resolved = Array.from(all.values());
         const installed = resolved.map((r) => this.installedOf(r.entry.id, r.entry.kind, r.entry.title === r.entry.id)).filter(Boolean);
@@ -1850,18 +2157,21 @@ class Updater {
             }
             return Object.assign(row, {
                 // the kept icon (a PNG anyone may read), null without one
-                icon: own || (icon && fs.existsSync(icon) ? icon : null),
+                icon: own || (icon && this.once(`icon\0${icon}`, () => fs.existsSync(icon)) ? icon : null),
                 compat: catalogLib.compat(row.mguHmi, this.unit && this.unit.hmi),
                 revision: entry.revision || null,
                 // the id its source lists, when the row's id is another
                 listedId: entry.listedId || null,
+                // its source's repo or URL, also once that source is removed
+                from: row.source ? this.sourceLabel(row.source) : null,
                 // the id it is, or would be, installed under
                 installAs: entry.installAs || entry.id,
                 // why it cannot be installed: another origin's component has its id
                 blocked: entry.blocked || null,
                 // also an install queued for the next start (iDrive 8), not installed until then
                 pendingReboot: placed || (ours && this.pending.indexOf(unit) >= 0),
-                problem: row.installed ? (entry.kind === 'tool' && toolProblem(this.conf, unit)) || this.repairWhy(unit, ours) : null,
+                problem: row.installed ? (entry.kind === 'tool' && this.once(`problem\0${unit}`, () => toolProblem(this.conf, unit))) ||
+                    this.repairWhy(unit, ours) : null,
                 // why the installed component does not work until it is set up again (the deploy tool's stale)
                 repair: row.installed && ours && this.stale[unit] ? this.stale[unit].why : null,
                 // why the installed tool's install step waits for its next install or Set up
@@ -1943,10 +2253,52 @@ class Updater {
         if (this.sendTimer) {
             return;
         }
+        // the state carries the progress too
+        clearTimeout(this.progressTimer);
+        this.progressTimer = null;
         this.sendTimer = setTimeout(() => {
             this.sendTimer = null;
-            const line = JSON.stringify(this.state()) + '\n';
-            this.clients.forEach((s) => s.write(line));
+            this.send(Array.from(this.clients));
+        }, 250);
+    }
+
+    /* The state to clients, each with the texts of the language its hello named. */
+    send(clients) {
+        if (!clients.length) {
+            return;
+        }
+        const st = this.state();
+        const lines = new Map();
+        clients.forEach((s) => {
+            const language = (this.said.get(s) || {}).language || null;
+            if (!lines.has(language)) {
+                lines.set(language, JSON.stringify(textsIn(st, language)) + '\n');
+            }
+            s.write(lines.get(language));
+        });
+    }
+
+    /* A download's progress, at most every 250 ms: {type:"progress", busy}
+     * to the clients whose hello asked for it, the state to the others. */
+    progressed() {
+        if (this.sendTimer || this.progressTimer) {
+            return;
+        }
+        this.progressTimer = setTimeout(() => {
+            this.progressTimer = null;
+            const full = [];
+            const line = JSON.stringify({ type: 'progress', busy: this.busy }) + '\n';
+            this.clients.forEach((s) => {
+                if ((this.said.get(s) || {}).progress) {
+                    // a download that has ended: the state that says so is on its way
+                    if (this.busy) {
+                        s.write(line);
+                    }
+                } else {
+                    full.push(s);
+                }
+            });
+            this.send(full);
         }, 250);
     }
 
@@ -2326,7 +2678,13 @@ class Updater {
         return true;
     }
 
-    check() {
+    /* auto: one the updater starts itself (at start, its interval, the
+     * uplink coming up), which takes the deploy tool's word from a refresh
+     * just made; one asked for refreshes. force (its interval): the deploy
+     * tool and app-privacy are asked again, whatever answers are kept. */
+    check(auto, force) {
+        // one under way refreshes as forced when a forced one comes meanwhile
+        this.checkForced = this.checkForced || !!force;
         if (this.checking) {
             return this.checking;
         }
@@ -2347,7 +2705,17 @@ class Updater {
                 this.iconPass = Promise.all(rts.map((rt) => rt.icons)).then(() => Promise.all(rts.map((rt) => this.fetchIcons(rt))));
                 return this.pruneIcons();
             })
-            .then(() => this.refresh())
+            // with or without a refresh: the apps the sources list are taken over and lost ones put back
+            .then(() => {
+                const forced = this.checkForced;
+                this.checkForced = false;
+                if (forced || !auto || Date.now() - this.refreshedAt >= REFRESH_FRESH_MS) {
+                    return this.refresh(forced);
+                }
+                this.takeOver();
+                this.repairLost();
+                return undefined;
+            })
             .then(() => {
                 this.checking = null;
                 this.repairStale();
@@ -2693,8 +3061,23 @@ class Updater {
         rmIfThere(path.join(this.conf.state_dir, 'store-trial.json'));
     }
 
-    /* {op: "hello", id, version}: a client says what it is. The Store on
-     * trial saying it ends the trial. Nothing is answered. */
+    /* {op: "hello", id, version, language, progress}: a client says what it
+     * is. The Store on trial saying it ends the trial. Nothing is answered;
+     * a client that names another language than before gets the state again
+     * with that language's texts (textsIn). */
+    hello(req, s) {
+        this.storeHello(req);
+        if (!s) {
+            return;
+        }
+        const was = this.said.get(s);
+        const language = typeof req.language === 'string' && LANGUAGE.test(req.language) ? req.language : null;
+        this.said.set(s, { language, progress: req.progress === true });
+        if (language !== ((was && was.language) || null)) {
+            this.send([s]);
+        }
+    }
+
     storeHello(req) {
         const t = this.storeTrial;
         if (t && req.id === this.conf.store_app && req.version === t.version) {
@@ -3109,7 +3492,7 @@ class Updater {
             if (total) {
                 this.busy.total = total;
             }
-            this.changed();
+            this.progressed();
         };
         if (!entry.path) {
             return rt.reader.artifact(entry, progress);
@@ -3518,10 +3901,52 @@ class Updater {
         return attempt();
     }
 
+    /* The deploy tool's status and app-privacy's check, each answer kept
+     * while what it rests on holds: this start of the head unit, the app
+     * manager's process and the stamps of the files it read (the deploy
+     * tool's inputs, until its inputs_until; the tool and the bundles the
+     * check names, unchanged while it ran). force: both asked again. */
+    answers(force) {
+        const key = `${bootId(this.conf)}\0${mainappProcess(this.conf)}`;
+        const holds = (k) => !force && !!k && k.key === key && Date.now() < k.until &&
+            Object.keys(k.inputs).every((p) => inputStamp(p) === k.inputs[p]);
+        const stamps = (files) => files.reduce((o, f) => Object.assign(o, { [f]: inputStamp(f) }), {});
+        const kept = this.answersKept;
+        const status = holds(kept.status) ? Promise.resolve(kept.status.answer) : deployStatus(this.conf).then((st) => {
+            const inputs = st && st.inputs;
+            this.answersKept.status = inputs && typeof inputs === 'object' && !Array.isArray(inputs) ? { key, answer: st, inputs,
+                until: typeof st.inputs_until === 'number' ? st.inputs_until : Infinity } : null;
+            return st;
+        });
+        let privacy;
+        if (holds(kept.privacy)) {
+            privacy = Promise.resolve(kept.privacy.answer);
+        } else {
+            // kept only when none of the files it read changed in the second before it ran or since
+            const tool = this.conf.privacy_tool;
+            const since = Date.now() - 1000;
+            privacy = privacyState(this.conf).then((r) => {
+                const files = r && r.files ? [tool].concat(r.files) : null;
+                const settled = !!files && files.every((f) => {
+                    try {
+                        return fs.statSync(f).ctime.getTime() < since;
+                    } catch (e) {
+                        return false;
+                    }
+                });
+                this.answersKept.privacy = settled ? { key, answer: r, inputs: stamps(files), until: Infinity } : null;
+                return r;
+            });
+        }
+        return Promise.all([status, privacy]);
+    }
+
     /* What only the unit's tools can tell: pending reboots, the head unit,
      * the installed providers, the privacy patch. */
-    refresh() {
-        return Promise.all([deployStatus(this.conf), privacyState(this.conf)]).then(([st, privacy]) => {
+    refresh(force) {
+        return this.answers(force).then(([st, checked]) => {
+            const privacy = checked ? checked.state : null;
+            this.refreshedAt = st ? Date.now() : 0;
             this.pending = pendingOf(st);
             this.nextStart = nextStartOf(st);
             if (st) {
@@ -3880,6 +4305,8 @@ class Updater {
         const roles = changed.map((c) => c.role);
         if (roles.indexOf('fetch') >= 0) {
             this.fetcher.notBefore = Date.now() + UPLINK_RESCAN_MS;
+            // nothing keeps running as the uid given up
+            this.fetcher.stop();
         }
         if (roles.indexOf('web') >= 0) {
             this.writeSecrets();
@@ -3904,6 +4331,8 @@ class Updater {
      * SIGKILL 10 s later) and counts as failed. */
     deployTool(args) {
         this.deployError = null;
+        // what it changes is asked again
+        this.answersKept = { status: null, privacy: null };
         const limitS = Number(this.conf.deploy_timeout_s) || 5400;
         const limit = limitS >= 120 ? `${Math.round(limitS / 60)} min` : `${limitS} s`;
         return new Promise((resolve) => {
@@ -4038,7 +4467,7 @@ class Updater {
             }
             this.webUrl = url;
             const store = this.storeData();
-            if (!store) {
+            if (!store || (!url && !fs.existsSync(path.join(store.data, 'web-url')))) {
                 return undefined;
             }
             // the Store reads the file when a state arrives: one goes out once it is written
@@ -4091,13 +4520,13 @@ class Updater {
             if (this.stored.some((s) => s.type === 'github' && s.repo.toLowerCase() === req.repo.toLowerCase())) {
                 return `${req.repo} is already a source`;
             }
-            def = { id: this.freeSourceId(req.repo.split('/')[1].toLowerCase()), type: 'github', repo: req.repo };
+            def = { id: this.freeSourceId(repoId(req.repo), req.repo), type: 'github', repo: req.repo };
             if (req.channel) {
                 def.channel = req.channel;
             }
         } else if (req.type === 'https') {
             try {
-                def = sourcesLib.checkStored({ id: this.freeSourceId(want || null), type: 'https', url: req.url });
+                def = sourcesLib.checkStored({ id: this.freeSourceId(want || null, req.url), type: 'https', url: req.url });
             } catch (e) {
                 return 'url must be https://';
             }
@@ -4108,6 +4537,7 @@ class Updater {
             return 'type must be github or https';
         }
         this.saveSources(this.stored.concat([def]));
+        this.reclaimOrigins(def);
         this.addRuntime(def);
         console.log(`source ${def.id}: added (${sourcesLib.label(def)}${def.channel ? `, ${def.channel}` : ''})`);
         this.checkSource(def.id);
@@ -4168,10 +4598,12 @@ class Updater {
         cp.execFileSync('rm', ['-rf', path.join(this.ctx.cacheDir, id)]);
         // repo files are kept by git id, shared by every source
         this.ctx.batch.drop();
-        // what it installed keeps it as its origin: no other source updates that
+        // what it installed keeps it as its origin, with the repo or URL it was (removed): no other source updates that
         Object.keys(this.origins).forEach((c) => {
             if (this.origins[c].source === id && !this.installedOf(c)) {
                 delete this.origins[c];
+            } else if (this.origins[c].source === id) {
+                this.origins[c].removed = sourcesLib.label(def);
             }
         });
         this.saveOrigins();
@@ -4467,7 +4899,7 @@ class Updater {
         }
     }
 
-    handle(req, reply) {
+    handle(req, reply, client) {
         if (cnSources.enabled(this.conf) &&
             ['login-start', 'login-cancel', 'token-add', 'token-remove', 'source-probe'].indexOf(req.op) >= 0) {
             return 'GitHub features are disabled in the CN distribution';
@@ -4489,7 +4921,7 @@ class Updater {
         case 'uninstall': return typeof req.id === 'string' ? this.requestUninstall(req.id, req.tools) : 'uninstall needs an id';
         case 'rollback': return typeof req.id === 'string' ? this.requestRollback(req.id) : 'rollback needs an id';
         case 'setup': return typeof req.id === 'string' ? this.requestSetup(req.id) : 'setup needs an id';
-        case 'hello': this.storeHello(req); return undefined;
+        case 'hello': this.hello(req, client); return undefined;
         case 'source-add': return this.sourceAdd(req);
         case 'source-probe': return this.sourceProbe(req, reply);
         case 'source-remove': return this.sourceRemove(req.id);
@@ -4529,7 +4961,7 @@ class Updater {
     /* The new version is in place: the supervisor starts it once we exit. */
     handover() {
         console.log('handing over to the new version');
-        // the new version takes up what is still queued once it is kept
+        // the new version takes up what is still queued, and starts it once it is kept
         if (this.queue.length) {
             mkdirp(this.conf.state_dir, 0o755);
             writeAtomic(path.join(this.conf.state_dir, 'queue.json'), JSON.stringify(this.queue));
@@ -4582,7 +5014,9 @@ class Updater {
     }
 
     /* One JSON request per line (README.md, "The socket"). Every client gets
-     * the full state on connect and whenever it changes; a refused request
+     * the state on connect and whenever it changes (with only the texts of
+     * the language its hello names, and download progress on its own when
+     * its hello asks for it); a refused request
      * gets {type:"error", op, error}. The direct answer to a request carries
      * its "rid". */
     accept(s) {
@@ -4614,12 +5048,13 @@ class Updater {
                 const rid = (typeof req.rid === 'string' && req.rid.length <= 64) || Number.isInteger(req.rid) ? { rid: req.rid } : {};
                 const reply = (msg) => {
                     if (!s.destroyed) {
-                        s.write(JSON.stringify(Object.assign(msg, rid)) + '\n');
+                        const out = msg.type === 'state' ? textsIn(msg, (this.said.get(s) || {}).language || null) : msg;
+                        s.write(JSON.stringify(Object.assign(out, rid)) + '\n');
                     }
                 };
                 let error;
                 try {
-                    error = this.handle(req, reply);
+                    error = this.handle(req, reply, s);
                 } catch (e) {
                     error = e.message;
                 }
@@ -4652,9 +5087,12 @@ class Updater {
      * up (a boot) or a passing network error is not taken for a broken
      * version. Otherwise it exits and the supervisor goes back to the version
      * on record in trial; the reason is left for the version that runs next.
-     * A version the local installer put there (trial-local) needs only the
-     * deploy tool: the car may have no internet while it is set up.
-     * Installs queue meanwhile. */
+     * The built-in source is read first, and every source only when it does
+     * not answer: one answer shows the network path works, and the other
+     * sources are read at the first check. A version the local installer put
+     * there (trial-local) needs only the deploy tool: the car may have no
+     * internet while it is set up. What the version before left queued, and
+     * installs asked for meanwhile, wait for the trial's end. */
     commitTrial(trial) {
         const local = path.join(this.conf.tool_root, SELF, 'trial-local');
         const needsCatalog = !fs.existsSync(local);
@@ -4680,6 +5118,7 @@ class Updater {
             process.exit(1);
         };
         this.busy = { id: SELF, phase: 'check' };
+        this.takeQueue();
         this.changed();
         return Promise.resolve().then(attempt)
             .then(() => deployStatus(this.conf))
@@ -4725,8 +5164,8 @@ class Updater {
             }
             this.writeSecrets();
             if (web) {
-                // also with false: it removes a firewall rule an earlier run left
-                Promise.resolve(this.applyWeb()).then(() => this.syncWebUrl(true));
+                // also with false: it removes a firewall rule an earlier run left; writeSecrets wrote web-url
+                Promise.resolve(this.applyWeb()).then(() => this.syncWebUrl());
             }
             const trial = path.join(this.conf.tool_root, SELF, 'trial');
             if (fs.existsSync(trial)) {
@@ -4759,8 +5198,13 @@ class Updater {
             }
             this.refresh().then(() => this.changed());
             let wasOnline = readLease(this.conf).online;
-            setTimeout(() => this.check(), Number(this.conf.first_check_s) * 1000);
-            setInterval(() => this.check(), Number(this.conf.check_interval_s) * 1000);
+            // the first check also reads what an uplink that comes up before it brings
+            let firstDue = true;
+            setTimeout(() => {
+                firstDue = false;
+                this.check(true);
+            }, Number(this.conf.first_check_s) * 1000);
+            setInterval(() => this.check(true, true), Number(this.conf.check_interval_s) * 1000);
             // a Store update on trial: its process looked for each second
             setInterval(() => this.watchStoreTrial(), 1000);
             // USB media: nothing announces a stick, so the mounts are looked
@@ -4815,8 +5259,8 @@ class Updater {
                 if (online !== wasOnline) {
                     wasOnline = online;
                     this.changed();
-                    if (online) {
-                        this.check();
+                    if (online && !firstDue) {
+                        this.check(true);
                     }
                 }
             }, 15000);
@@ -4911,6 +5355,6 @@ if (require.main === module) {
     cli(process.argv.slice(2));
 }
 
-module.exports = { Updater, Fetcher, loadConf, installedApp, installedTool, fileLog,
+module.exports = { Updater, repoId, Fetcher, loadConf, installedApp, installedTool, fileLog,
     // tests: a stand-in phone page
     _setWeb: (w) => { web = w; } };

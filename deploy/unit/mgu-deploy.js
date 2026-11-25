@@ -55,7 +55,7 @@ var os = require('os');
 process.umask(0o022);
 
 /* deploy/component.json's version; the release sets both. */
-var VERSION = '0.8.28';
+var VERSION = '0.8.32';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -137,6 +137,8 @@ var RECMGR_OWNED = path.join(DEPLOY_DIR, 'recmgr-names.json');
 var FALLBACK_UNIT = 'mgu-app-fallback.service';
 var FALLBACK_NAME = 'mgu-app-fallback';
 var FALLBACK_COPY = path.join(DEPLOY_DIR, 'main.js');
+/* the iDrive 8 boot unit's record of relist's inputs at its last full run */
+var RELIST_STAMP = path.join(DEPLOY_DIR, 'relist.stamp');
 var FALLBACK_BUILD_INSTALLED = path.join(DEPLOY_DIR, 'current', 'fallback_build.js');
 var INPLACE_DIR = path.join(DEPLOY_DIR, 'inplace');
 var INPLACE_REQUEST = path.join(INPLACE_DIR, 'request.json');
@@ -467,6 +469,7 @@ function unitInfo() {
     if (id7 !== id8) { hmi = id8 ? 'ID8' : 'ID7'; basis = id8 ? CFG.mainapp21 : CFG.mainapp; }
     else {
         hmi = hmiProcess();
+        answerHoldsUntil(0);
         basis = hmi ? (hmi === 'ID8' ? 'Hmi8' : 'HmiMain3D') + ' running' : (id7 ? 'both MainApp folders' : 'no MainApp folder') + ', no HMI running';
     }
     UNIT_INFO = { hmi: hmi, firmware: firmwareString(), basis: basis };
@@ -878,12 +881,16 @@ function statusHeld() {
  * stderr (stdout keeps status's own). */
 function statusStep(what, fn) {
     var out = process.stdout.write;
-    if (statusHeld()) return;
+    // a step not run, or failed, is tried again at the next status: this answer is not one to keep
+    if (statusHeld()) { answerHoldsUntil(0); return; }
     process.stdout.write = function (x) { return process.stderr.write(x); };
     try {
-        if (!statusLock()) return;
+        if (!statusLock()) { answerHoldsUntil(0); return; }
         try { fn(); } finally { releaseLock(); }
-    } catch (e) { process.stderr.write('mgu-deploy: ' + what + ': ' + e.message + '\n'); }
+    } catch (e) {
+        answerHoldsUntil(0);
+        process.stderr.write('mgu-deploy: ' + what + ': ' + e.message + '\n');
+    }
     finally { process.stdout.write = out; }
 }
 /* The manager's node child, waited for up to bounceTimeoutMs: oapcontroller
@@ -2468,6 +2475,8 @@ function mainappHmi() {
             var r = iface ? run(CFG.node, ['-e', HMI_READER, iface, env('MGU_DEPLOY_SOMEIP', '/usr/lib/someip.node'),
                 path.join(CFG.mainapp, 'node_modules', 'codings.node')], { allowFail: true, timeout: 15000 }) : null;
             raw = (r && lastJsonLine(r.stdout)) || {};
+            // unread: the next status reads it again
+            if (typeof raw.hmiVersion !== 'string') answerHoldsUntil(0);
             if (typeof raw.hmiVersion === 'string' && !statusReadOnly) {
                 try { mkdirp(CFG.run); writeAtomic(hmiReadFile(), JSON.stringify({ boot: boot, hmiVersion: raw.hmiVersion, brand: raw.brand })); }
                 catch (e) { /* read again next time */ }
@@ -3756,9 +3765,15 @@ function installTool(a, state, tx) {
         if (hr.reboot) addPending(state, c.id, hr.reboot);
     }
     if (c.postInstall) postInstall(c, root);
-    /* a new version that runs only from the next start is checked then */
+    /* a new version that runs only from the next start is checked then; when
+     * the version it replaces is not checked yet, the one before that stays
+     * the one to go back to, kept beside them */
     if (before !== c.version && pendingNow(state, c.id)) {
-        if (verifyWanted(c)) noteVerify(state, c, before);
+        if (verifyWanted(c)) {
+            var back = uncheckedPrevious(c, before, versions);
+            if (back) tx.keep.push(back);
+            noteVerify(state, c, before, back);
+        }
     } else if (before !== c.version && c.check) {
         var why = runCheck(c, root);
         if (why) {
@@ -4005,9 +4020,12 @@ function bootServices(c) {
     });
 }
 function verifyWanted(c) { return !!c.check || bootServices(c).length > 0; }
-/* verify.json: { <id>: { version, previous, boot } }, the tools whose new
- * version runs from the next start. mgu-deploy-verify.service checks them
- * at that start and rolls back one that does not work. */
+/* verify.json: { <id>: { version, previous, boot, unchecked } }, the tools
+ * whose new version runs from the next start. mgu-deploy-verify.service
+ * checks them at that start and rolls back one that does not work to
+ * previous. A version that replaced one still due for its check keeps that
+ * one's previous, and lists the versions between, never checked, in
+ * unchecked: they go once it passes. */
 var VERIFY_FILE = path.join(DEPLOY_DIR, 'verify.json');
 var VERIFY_LAST = path.join(DEPLOY_DIR, 'last-verify.json');
 var VERIFY_UNIT = 'mgu-deploy-verify.service';
@@ -4020,12 +4038,40 @@ function writeVerify(v) {
     if (!Object.keys(v).length) { rmrf(VERIFY_FILE); return; }
     writeAtomic(VERIFY_FILE, JSON.stringify(v, null, 2) + '\n', 0o600);
 }
-function noteVerify(state, c, before) {
-    var v = readVerify();
-    v[c.id] = { version: c.version, previous: before, boot: bootId() };
+function noteVerify(state, c, before, back) {
+    var v = readVerify(), was = v[c.id], previous = back || before;
+    v[c.id] = { version: c.version, previous: previous, boot: bootId() };
+    if (back) {
+        v[c.id].unchecked = (Array.isArray(was.unchecked) ? was.unchecked : []).concat([before]).filter(function (x, i, all) {
+            return x !== back && x !== c.version && all.indexOf(x) === i;
+        });
+    }
     ensureBootUnit(state, VERIFY_UNIT, VERIFY_NAME);
     writeVerify(v);
-    say(c.id + ' ' + c.version + ' is checked at the next start' + (before ? ', and ' + before + ' comes back if it does not work' : ''));
+    say(c.id + ' ' + c.version + ' is checked at the next start' + (previous ? ', and ' + previous + ' comes back if it does not work' : '') +
+        (back ? ' (' + before + ' was not checked yet)' : ''));
+}
+/* The version a new install of c replaces, when its check at a start is
+ * still due: the version noted to go back to from it, when that one is
+ * kept; else null. */
+function uncheckedPrevious(c, before, versions) {
+    var was = readVerify()[c.id];
+    if (!before || before === c.version || !was || was.version !== before || typeof was.previous !== 'string' ||
+        !semverParts(was.previous) || was.previous === c.version) return null;
+    return fs.existsSync(path.join(versions, was.previous, 'component.json')) ? was.previous : null;
+}
+/* Once a version passed its check: the versions between it and the one to
+ * go back to, never checked, go (one owed its deactivate stays). */
+function dropUnchecked(t, e) {
+    var state = null;
+    (Array.isArray(e.unchecked) ? e.unchecked : []).forEach(function (ver) {
+        var dir = path.join(t.root, 'versions', String(ver));
+        if (!semverParts(String(ver)) || ver === t.version || ver === e.previous || !fs.existsSync(dir)) return;
+        state = state || loadState();
+        if (noted(state, 'deactivate_owed', t.id, ver)) return;
+        rmrf(dir);
+        noteHook(state, t.id, ver, 'gone');
+    });
 }
 function dropVerify(id) {
     var v = readVerify();
@@ -4033,6 +4079,20 @@ function dropVerify(id) {
 }
 function uptimeS() {
     try { return parseFloat(fs.readFileSync(path.join(CFG.proc, 'uptime'), 'utf8')); } catch (e) { return Infinity; }
+}
+function dueVerify(v) {
+    var boot = bootId();
+    return Object.keys(v).filter(function (id) { return v[id].boot !== boot; });
+}
+/* The wait for verifyAfterS, run between the start's clean-up under the
+ * deploy lock and cmdVerify under it again: the queued iDrive 8 app changes
+ * (apply-pending, before the app platform starts) and installs go ahead
+ * meanwhile, and cmdVerify reads verify.json again. */
+function verifyWait() {
+    var due = dueVerify(readVerify());
+    if (!due.length || readSafeMode()) return;
+    var wait = CFG.verifyAfterS - uptimeS();
+    if (wait > 0) { say('checking ' + due.join(', ') + ' once the head unit has been up ' + CFG.verifyAfterS + 's'); sleepMs(wait * 1000); }
 }
 /* verify: at a start after the install, each tool noted in verify.json
  * whose noted version is current gets its boot services' health check
@@ -4043,12 +4103,10 @@ function uptimeS() {
  * and no start repeats it. The results: last-verify.json, status'
  * last_verify. */
 function cmdVerify() {
-    var v = readVerify(), boot = bootId(), due = Object.keys(v).filter(function (id) { return v[id].boot !== boot; });
+    var v = readVerify(), due = dueVerify(v);
     if (!due.length) { say('nothing to check at this start'); return 0; }
     /* their services did not start: checked at a start without safe mode */
     if (readSafeMode()) { say('safe mode is on: ' + due.join(', ') + ' checked at a start without it'); return 0; }
-    var wait = CFG.verifyAfterS - uptimeS();
-    if (wait > 0) { say('checking ' + due.join(', ') + ' once the head unit has been up ' + CFG.verifyAfterS + 's'); sleepMs(wait * 1000); }
     var left = {};
     Object.keys(v).forEach(function (id) { if (due.indexOf(id) < 0) left[id] = v[id]; });
     writeVerify(left);
@@ -4079,7 +4137,11 @@ function cmdVerify() {
             return;
         }
         why = healthCheck(bootServices(t.component)) || (t.component.check ? runCheck(t.component, t.root) : null);
-        if (!why) { results.push({ id: id, version: e.version, ok: true }); return; }
+        if (!why) {
+            results.push({ id: id, version: e.version, ok: true });
+            try { dropUnchecked(t, e); } catch (err) { warn(id + ': the versions before ' + e.version + ' not checked stay: ' + err.message); }
+            return;
+        }
         process.stderr.write(id + ' ' + e.version + ' does not work: ' + why + '\n');
         var r = { id: id, version: e.version, ok: false, error: why, previous: e.previous || null, rolledBack: false };
         results.push(r);
@@ -5987,11 +6049,7 @@ function syncListingId8() {
         if (fallbackUnitOld()) {
             var busy = rootBusy();
             if (busy) return { state: ids.length ? 'changed' : 'pending', reason: done.concat(['boot unit: ' + busy]).join('; ') };
-            takeSnapshot('listing', [path.join(CFG.systemd, FALLBACK_UNIT)]);
-            syncDisks();
-            rootfsWindow([{ type: 'copy', src: fallbackUnitSource(), path: path.join(CFG.systemd, FALLBACK_UNIT), mode: 0o644 }]);
-            runOk(CFG.systemctl, ['daemon-reload']);
-            pruneBackups();
+            refreshFallbackUnit();
             done.push('boot unit brought up to date');
         }
         return { state: 'changed', reason: done.join('; ') };
@@ -6003,28 +6061,49 @@ function syncListingId8() {
         process.stdout.write = out;
     }
 }
-/* status on iDrive 7, run as root: lists the apps id7Unlisted() names. The
- * running manager reads the listing when provisioning reaches it, so their
- * tiles show from the manager's next start, or, with the fallback lost,
- * once an install turns it on again; an install restarts the manager that
- * has not taken them. Null on a unit with neither the fallback nor an app of ours. */
+/* The fallback's boot unit file as this version has it, from the next start
+ * (main.js stays bound as it is). */
+function refreshFallbackUnit() {
+    takeSnapshot('listing', [path.join(CFG.systemd, FALLBACK_UNIT)]);
+    syncDisks();
+    rootfsWindow([{ type: 'copy', src: fallbackUnitSource(), path: path.join(CFG.systemd, FALLBACK_UNIT), mode: 0o644 }]);
+    runOk(CFG.systemctl, ['daemon-reload']);
+    pruneBackups();
+}
+/* status on iDrive 7, run as root: lists the apps id7Unlisted() names, and,
+ * on a unit known to be iDrive 7 (unitInfo), brings the fallback's boot
+ * unit file up to date. The running manager
+ * reads the listing when provisioning reaches it, so their tiles show from
+ * the manager's next start, or, with the fallback lost, once an install
+ * turns it on again; an install restarts the manager that has not taken
+ * them. Null on a unit with neither the fallback nor an app of ours. */
 function syncListingId7() {
     if (isId8() || (!fallbackPresent() && !ourInstalledApps().length)) return null;
     var out = process.stdout.write, locked = false;
     process.stdout.write = function () { return true; };
     try {
-        if (!id7Unlisted().length) return { state: 'ok', reason: 'every app of ours is listed' };
+        var unitOld = function () { return unitInfo().hmi === 'ID7' && fallbackUnitOld(); };
+        if (!id7Unlisted().length && !unitOld()) return { state: 'ok', reason: 'every app of ours is listed' };
         var held = statusHeld();
         if (held) return { state: 'pending', reason: held };
         if (!runningInstalled() && !FAKE) return { state: 'pending', reason: 'this deploy tool is not the installed one' };
         locked = statusLock();
         if (!locked) return { state: 'pending', reason: 'another mgu-deploy run holds the lock' };
-        var s = loadState(), ids = listUnlistedId7(s);
-        if (!ids.length) return { state: 'ok', reason: 'every app of ours is listed' };
-        saveState(s);
-        var when = fallbackLost() ? 'once an install turns the provisioning fallback on again' : 'from the next start of the app manager';
-        process.stderr.write('listed for the provisioning fallback, ' + when + ': ' + ids.join(', ') + '\n');
-        return { state: 'changed', reason: 'listed ' + ids.join(', ') + '; their tiles show ' + when };
+        var s = loadState(), ids = listUnlistedId7(s), done = [];
+        if (ids.length) {
+            saveState(s);
+            var when = fallbackLost() ? 'once an install turns the provisioning fallback on again' : 'from the next start of the app manager';
+            process.stderr.write('listed for the provisioning fallback, ' + when + ': ' + ids.join(', ') + '\n');
+            done.push('listed ' + ids.join(', ') + '; their tiles show ' + when);
+        }
+        if (unitOld()) {
+            var busy = rootBusy();
+            if (busy) return { state: ids.length ? 'changed' : 'pending', reason: done.concat(['boot unit: ' + busy]).join('; ') };
+            refreshFallbackUnit();
+            done.push('boot unit brought up to date');
+        }
+        if (!done.length) return { state: 'ok', reason: 'every app of ours is listed' };
+        return { state: 'changed', reason: done.join('; ') };
     } catch (e) {
         process.stderr.write('mgu-deploy: our apps not listed again: ' + e.message + '\n');
         return { state: 'error', reason: e.message };
@@ -6852,6 +6931,8 @@ function unbindFallback() {
     var wasBound = binds() && bindMounted(mainJs());
     if (wasBound) runOk(CFG.umount, [mainJs()]);
     rmrf(FALLBACK_COPY);
+    rmrf(FALLBACK_COPY + '.stamp');
+    rmrf(RELIST_STAMP);
     /* The boot unit binds the copy before app-privacy's boot run, so the
      * stock main.js under it may hold an older patch or none. With the
      * guard off it stays as it is until the next start. */
@@ -6989,7 +7070,11 @@ function managerRunsCopy() {
     if (inplaceHookOf(copy) === null) return !managerStale();
     if (hookAnnounced(m)) return true;
     var lb = lastBounceAt();
-    return m.started !== null && lb > 0 && m.started >= lb - 1 && m.started + CFG.bounceMinUpS > nowS();
+    if (m.started !== null && lb > 0 && m.started >= lb - 1 && m.started + CFG.bounceMinUpS > nowS()) {
+        answerHoldsUntil((m.started + CFG.bounceMinUpS) * 1000);
+        return true;
+    }
+    return false;
 }
 /* The copy's in-place hook announced itself for manager m. */
 function hookAnnounced(m) {
@@ -7374,6 +7459,80 @@ function collectStatusNow(state) {
         app_uids: appUids(),
         stock_backup: fs.existsSync(path.join(BACKUPS_DIR, 'stock')) };
 }
+/* status --json's inputs (README.md, "status"): the files this run read,
+ * each stamped as it was first read (one this run wrote, or a folder it
+ * changed the entries of: as the run left it), so a caller can keep the
+ * answer while they hold. Live parts (units, journals, running, app_uids)
+ * and the app manager's process are not among them; inputs_until (epoch
+ * ms) is when an answer that rests on the time runs out. A run whose
+ * answer rests on more (answerHoldsUntil(0)) gives no inputs. */
+var readStamps = null;
+var wrotePaths = null;
+var answerUntil = Infinity;
+var fsStat = fs.statSync;
+var fsLstat = fs.lstatSync;
+var fsRead = fs.readFileSync;
+var readsFrom = 0;
+function answerHoldsUntil(ms) { answerUntil = Math.min(answerUntil, ms); }
+/* size:mtime:ctime:inode (ms) as lstat gives them, for a link followed by
+ * '>' and its target's ('>-' when it leads nowhere), '-' when absent;
+ * /proc/mounts the sha256 of its text. */
+function inputStamp(p) {
+    var one = function (st) { return st.size + ':' + st.mtime.getTime() + ':' + st.ctime.getTime() + ':' + st.ino; };
+    try {
+        if (p === '/proc/mounts') return crypto.createHash('sha256').update(fsRead(p)).digest('hex').slice(0, 16);
+        var st = fsLstat(p);
+        if (!st.isSymbolicLink()) return one(st);
+        try { return one(st) + '>' + one(fsStat(p)); } catch (e) { return one(st) + '>-'; }
+    } catch (e) { return '-'; }
+}
+function trackReads() {
+    readStamps = {};
+    wrotePaths = {};
+    readsFrom = Date.now();
+    var read = function (p) {
+        if (typeof p !== 'string') return;
+        var r = path.resolve(p);
+        if (!(r in readStamps)) readStamps[r] = inputStamp(r);
+    };
+    // the folder too: its entries are the run's to change
+    var wrote = function (p) {
+        if (typeof p !== 'string') return;
+        wrotePaths[path.resolve(p)] = true;
+        wrotePaths[path.dirname(path.resolve(p))] = true;
+    };
+    var wrap = function (m, each) {
+        var orig = fs[m];
+        fs[m] = function () { each.apply(null, arguments); return orig.apply(fs, arguments); };
+    };
+    ['readFileSync', 'statSync', 'lstatSync', 'existsSync', 'readdirSync', 'readlinkSync', 'realpathSync', 'accessSync']
+        .forEach(function (m) { wrap(m, read); });
+    wrap('openSync', function (p, flags) {
+        var reading = typeof flags === 'number' ? (flags & 3) === 0 : !flags || /^(r|rs|sr)$/.test(flags);
+        (reading ? read : wrote)(p);
+    });
+    ['writeFileSync', 'appendFileSync', 'unlinkSync', 'mkdirSync', 'rmdirSync', 'chmodSync', 'chownSync', 'utimesSync', 'truncateSync']
+        .forEach(function (m) { wrap(m, wrote); });
+    wrap('mkdtempSync', function (prefix) { wrote(prefix + 'x'); });
+    ['renameSync', 'symlinkSync', 'copyFileSync', 'linkSync'].forEach(function (m) {
+        wrap(m, function (a, b) { wrote(a); wrote(b); });
+    });
+}
+function readInputs() {
+    var out = {}, proc = path.resolve(CFG.proc);
+    Object.keys(readStamps).sort().forEach(function (p) {
+        var live = [proc, '/proc', '/sys', '/dev'].some(function (d) { return p === d || p.indexOf(d + '/') === 0; });
+        if (live && p !== '/proc/mounts') return;
+        out[p] = wrotePaths[p] ? inputStamp(p) : readStamps[p];
+        // another writer's change in the second before the run, or while it ran, may share one stamp
+        if (!wrotePaths[p] && p !== '/proc/mounts') {
+            String(out[p]).split('>').forEach(function (one) {
+                if (Number(one.split(':')[2]) >= readsFrom - 1000) answerHoldsUntil(0);
+            });
+        }
+    });
+    return out;
+}
 function cmdStatus(args, crashList, live, limits, listing) {
     var s = collectStatus(loadState());
     s.crash_list = crashList;
@@ -7382,7 +7541,21 @@ function cmdStatus(args, crashList, live, limits, listing) {
     if (listing) s.listing = listing;
     s.app_privacy_record = privacyRecord();
     s.safe_mode = readSafeMode();
-    if (args.json) { say(JSON.stringify(s)); return 0; }
+    if (args.json) {
+        if (readStamps) {
+            // a repair left pending or failed, or another run under way: the next status looks again
+            if ([crashList, live, limits, listing].some(function (r) { return r && r.state !== 'ok'; })) answerHoldsUntil(0);
+            var lock = lockState();
+            if (lock.live) answerHoldsUntil(0);
+            var inputs = readInputs();
+            if (answerUntil > Date.now()) {
+                s.inputs = inputs;
+                if (answerUntil < Infinity) s.inputs_until = Math.floor(answerUntil);
+            }
+        }
+        say(JSON.stringify(s));
+        return 0;
+    }
     say('crash handler whitelist: ' + crashList.state + ' (' + crashList.reason + ')');
     say('service limits: ' + limits.state + ' (' + limits.reason + ')');
     if (live) say('live app installs: ' + live.state + ' (' + live.reason + ')');
@@ -9231,8 +9404,9 @@ function removeSelfAtStart() {
     [customAppsFile(), listedRecordFile(), path.join(mgrHome(), 'data', GUARD_FILE_NAME)].forEach(rmrf);
     removeDeployDir();
 }
-/* rollback <id>: a tool's current back to the one other version kept
- * (args.to: that version only). The version going runs its deactivate
+/* rollback <id>: a tool's current back to the one other version kept, or
+ * the one verify.json notes to go back to while the current version waits
+ * for its check (args.to: that version only). The version going runs its deactivate
  * first (a failed one refuses the rollback), then the units, links,
  * drop-ins and list names it has and the other does not go. The other's
  * restart[] units follow the install rules and the health check; a failed
@@ -9256,8 +9430,9 @@ function cmdRollback(args) {
     }).sort();
     if (!others.length) throw refuse(id + ' ' + cur + ': no other version is kept to roll back to');
     if (args.to && others.indexOf(args.to) < 0) throw refuse(id + ': ' + args.to + ' is not kept (' + others.join(', ') + ')');
-    if (!args.to && others.length > 1) throw refuse(id + ': several versions are kept (' + others.join(', ') + '); install the one wanted');
-    var target = args.to || others[0], tc = readJsonOrNull(path.join(root, 'versions', target, 'component.json'));
+    var back = args.to ? null : notedPrevious(id, cur, others);
+    if (!args.to && !back && others.length > 1) throw refuse(id + ': several versions are kept (' + others.join(', ') + '); install the one wanted');
+    var target = args.to || back || others[0], tc = readJsonOrNull(path.join(root, 'versions', target, 'component.json'));
     if (!tc || tc.id !== id) throw refuse(id + ': versions/' + target + ' has no readable component.json');
     var state = loadState(), cc = tool.component;
     var backup = takeSnapshot('rollback', toolTouched(cc).concat(toolTouched(tc)));
@@ -9350,14 +9525,23 @@ function cmdRollback(args) {
     say(id + ' rolled back to ' + target);
     return 0;
 }
-/* The version Undo update returns a tool to: the one other version kept,
- * when it is older. */
+/* The version Undo update returns a tool to: while its current version waits
+ * for its check, the one verify.json notes to go back to; else the one other
+ * version kept. Either only when it is older. */
 function toolPrevious(t) {
     var cur = currentTarget(t.root), others = [];
     try {
         others = fs.readdirSync(path.join(t.root, 'versions')).filter(function (v) { return v !== cur && semverParts(v); });
     } catch (e) { /* no versions folder */ }
+    var back = notedPrevious(t.id, cur, others);
+    if (back) return semverCmp(back, cur) < 0 ? back : null;
     return others.length === 1 && semverCmp(others[0], cur) < 0 ? others[0] : null;
+}
+/* The version verify.json notes to go back to from id's current version cur,
+ * when it is one of the kept versions others; else null. */
+function notedPrevious(id, cur, others) {
+    var e = readVerify()[id];
+    return e && e.version === cur && typeof e.previous === 'string' && others.indexOf(e.previous) >= 0 ? e.previous : null;
 }
 
 /* ---- apps: kept packages and rollback (iDrive 7), unregistered apps ----------- */
@@ -9388,6 +9572,7 @@ function repairKeepsSafeMode() {
  * An app the user removes has no record from the start of its removal. */
 function lostReport(state) {
     var lock = lockState(), out = { lost: [], held: [] };
+    if (!lock.free && lock.live) answerHoldsUntil(0);
     if ((!lock.free && lock.live) || !mgrDataReady()) return out;
     var all = isId8() ? unprovisionedId8() : Object.keys(state.apps).map(function (id) {
         var v = state.apps[id] && state.apps[id].version;
@@ -9839,7 +10024,7 @@ function runCommand() {
         if (args.command === 'edition-status') return cmdEditionStatus(args);
         if (args.command === 'check') return cmdCheck(args);
         if (args.command === 'install') return cmdInstall(args);
-        if (args.command === 'status') { statusReadOnly = !!args.readOnly || !!editionPending(); syncMgrHome(); syncGuard(); syncStashes(); syncHeld(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), isId8() ? syncListingId8() : syncListingId7()); }
+        if (args.command === 'status') { if (args.json) trackReads(); statusReadOnly = !!args.readOnly || !!editionPending(); syncMgrHome(); syncGuard(); syncStashes(); syncHeld(); syncId7Parts(); return cmdStatus(args, syncBootLists(), syncLiveId8(), syncLimits(), isId8() ? syncListingId8() : syncListingId7()); }
         if (args.command === 'relist') {
             if (!FAKE && typeof process.getuid === 'function' && process.getuid() !== 0) throw refuse('run as root');
             return cmdRelist();
@@ -9856,7 +10041,12 @@ function runCommand() {
         if (args.command === 'updater-sources') return cmdUpdaterSources();
         if (args.command === 'sdk-donor') return cmdSdkDonor(args);
         if (args.command === 'apply-pending') return cmdApplyPending();
-        if (args.command === 'verify') return cmdVerify();
+        if (args.command === 'verify') {
+            releaseLock(); locked = false;
+            verifyWait();
+            acquireLock(); locked = true;
+            return cmdVerify();
+        }
         if (args.command === 'remove-unused') return cmdRemoveUnused();
         if (args.command === 'appmanager') return cmdAppManager(args);
         if (args.command === 'safe-mode') return cmdSafeMode(args);

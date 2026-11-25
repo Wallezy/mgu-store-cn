@@ -215,9 +215,10 @@ an id wins. Sticks are only read, and no link on them is followed.
 
 ## Installing
 
-- Sources are read at start (after `first_check_s`), every
-  `check_interval_s`, when the uplink comes up, when a stick is put in, and
-  on request (the Store, `updater.js check`).
+- Sources are read at start (after `first_check_s`, which also covers an
+  uplink that comes up before then), every `check_interval_s`, when the
+  uplink comes up, when a stick is put in, and on request (the Store,
+  `updater.js check`).
 - Installs run on request, one at a time; later requests queue. The deploy
   tool's own update goes first, the Store's last. The updater installs
   nothing unasked, except to set up again what a firmware update left not
@@ -355,7 +356,10 @@ output as `build <id>: …` lines, and the deploy tool's output as `deploy:
 `/dev/shm/mgu-updater/updater.sock`, `0660 root:tm_oap_app` (every OAP app
 has that group). One JSON object per line. The daemon sends the full state
 on connect, after each request, and whenever it changes (at most every
-250 ms):
+250 ms). A client whose `hello` names a `language` gets each component's
+`texts` in that language and its base language only; one whose `hello` has
+`"progress": true` gets a download's progress as
+`{"type":"progress","busy":{…}}` between states (the state's `busy`):
 
 ```json
 { "type": "state", "updater": { "version": "0.4.0" }, "online": true, "privacy": "patched",
@@ -384,7 +388,7 @@ on connect, after each request, and whenever it changes (at most every
     "description": "…", "texts": { "de": { "title": "DOOM", "description": "…" } }, "author": "…",
     "icon": "/var/opt/mgu-updater/state/icons/…png",
     "mguHmi": ["ID7"], "compat": "yes", "provides": null, "service": null,
-    "listedId": null, "installAs": "doom", "blocked": null, "pendingReboot": false, "problem": null, "repair": null, "nextStart": null, "queued": false,
+    "listedId": null, "from": "cauliflowermossgrape/idrive7-apps", "installAs": "doom", "blocked": null, "pendingReboot": false, "problem": null, "repair": null, "nextStart": null, "queued": false,
     "previous": null, "requiredAlone": [], "error": null } ] }
 ```
 
@@ -398,7 +402,8 @@ on connect, after each request, and whenever it changes (at most every
   source states none; `icon` the kept icon's path, or null; `texts` the
   title and description in other languages, by the Store's language code
   (`de`, `pt-BR`, `zh-TW`), else null; `source` null for an installed
-  component without an origin.
+  component without an origin; `from` its source's repo or URL, also
+  once that source is removed.
 - `pendingReboot`: the change takes effect at the next start of the head
   unit; `nextStart` `install` or `remove` for an iDrive 8 app change queued
   for then (else null).
@@ -448,7 +453,9 @@ on connect, after each request, and whenever it changes (at most every
 
 Requests: `{"op":"status"}`, `{"op":"check"}`, `{"op":"install","id"}`
 (with its missing requirements first), from any app.
-`{"op":"hello","id","version"}` (no answer): a client says what it is.
+`{"op":"hello","id","version","language"?,"progress"?}` (no answer): a
+client says what it is; a `language` other than the one it named before
+sends it the state again.
 **Privileged** ones carry `"secret"`:
 
 | Request | Does |
@@ -458,7 +465,7 @@ Requests: `{"op":"status"}`, `{"op":"check"}`, `{"op":"install","id"}`
 | `{"op":"uninstall","id","tools"?}` | removes an `uninstallable` component (every app but the Store); then each of `tools`, which must be among the app row's `requiredAlone` |
 | `{"op":"setup","id"}` | Set up: a tool whose row has `needsSetup` set up again with its install step |
 | `{"op":"rollback","id"}` | Undo update: a component whose row has `previous` back to that version |
-| `{"op":"source-add","type":"github","repo":"o/r","channel"?}`, `{"op":"source-add","type":"https","url"}` | adds a source (id: the repo's name, else `s-<hex>`) and reads it |
+| `{"op":"source-add","type":"github","repo":"o/r","channel"?}`, `{"op":"source-add","type":"https","url"}` | adds a source (id: a removed source's of the same repo or URL, else `<owner>_<repo>` lowercased, else `s-<hex>`) and reads it |
 | `{"op":"source-probe","repo":"o/r"}` | `{"type":"probe","repo",status}`: what a GitHub repo can be added on. `ok` with `name` (the repo as GitHub spells it), `releases` (it has a release), `tags` (an x.y.z tag), `defaultBranch`, `branches` (at most 300) and `more` (there are more); `auth-needed`, `offline`, `rate-limited`, or `error` with `error`. A repo that is already a source is refused |
 | `{"op":"source-remove","id"}` | removes a source (not the built-in one); what it installed keeps it as its origin |
 | `{"op":"token-add","token","label"?}` | stores a token GitHub accepts, labelled (else with its account), and reads the sources that need one |
@@ -517,7 +524,7 @@ js/catalog.js            catalog parsing (schema 1 and 2), installed-vs-source p
 js/tar.js                .tar.gz in memory: reading a repo tarball, packing a component
 js/build.js              a repo's build script, as the build uid
 js/login.js              GitHub device-flow sign-in
-js/fetch.js              one download, as the fetch uid
+js/fetch.js              downloads, as the fetch uid
 js/certs.js              a server's certificate chain checked without its dates
 js/py/sitecustomize.py   a Python build's TLS: certificates checked without their dates
 js/client.js             socket client (Store app, command line)
