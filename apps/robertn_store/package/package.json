@@ -36,7 +36,7 @@
   "engines": {
     "node": ">=8.7.0"
   },
-  "author": "owner",
+  "author": "Robert Nisipeanu",
   "license": "GPL-3.0-or-later",
   "mguLocalOnly": true,
   "mguHmi": [
