@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const APP = path.resolve(__dirname, '..');
 const root = path.resolve(APP, '../..');
+const TREE = path.join(APP, require('../mgu-app.json').tree);
 function files() {
     const contributors = require(path.join(root, 'release/contributors.json')).components.robertn_store;
     const roles = { author: '上游作者', translation: '中文翻译', adaptation: '适配与维护', runtime: '共享代码', assets: '资源与数据' };
@@ -16,7 +17,7 @@ function files() {
 }
 function write() {
     const generated = files();
-    Object.keys(generated).forEach((name) => fs.writeFileSync(path.join(APP, 'package', name), generated[name]));
+    Object.keys(generated).forEach((name) => fs.writeFileSync(path.join(TREE, name), generated[name]));
 }
 if (require.main === module) write();
 module.exports = { files, write };

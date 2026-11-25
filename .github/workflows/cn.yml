@@ -23,6 +23,8 @@ jobs:
         run: node release/test/cn_distribution_test.js
       - name: CN snapshot preparation
         run: python3 -m unittest discover -s release/test -p 'test_*.py' -v
+      - name: Contributor records
+        run: node release/test/contributors_test.js
       - name: Updater compatibility
         run: sh native/mgu-updater/test/run.sh
       - name: Local installer

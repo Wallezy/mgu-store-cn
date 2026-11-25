@@ -29,15 +29,6 @@ assert.deepStrictEqual(row(records).contributors, records, 'catalog credits reac
 assert.deepStrictEqual(row(undefined).contributors, [], 'old catalogs remain usable');
 assert.deepStrictEqual(row({ malformed: true }).contributors, [], 'optional metadata never blocks installation');
 assert.strictEqual(row(records).status, 'available');
-const fs = require('fs');
-const path = require('path');
-const root = path.resolve(__dirname, '../../..');
-const all = require(path.join(root, 'release/release')).components();
-assert.strictEqual(all.length, 7);
-all.forEach((c) => assert.deepStrictEqual(contributorsOf(c.contributors), c.contributors, c.id + ': reviewed record'));
-const generated = require(path.join(root, 'apps/robertn_store/tools/gen_contributors')).files();
-Object.keys(generated).forEach((name) => assert.strictEqual(
-    fs.readFileSync(path.join(root, 'apps/robertn_store/package', name), 'utf8'), generated[name], name + ': shipped credits'));
 const files = require('../component.json').files;
 assert(files.some((f) => f.path === 'contributors.js' && f.from === 'js/contributors.js'), 'the updater ships its parser');
 console.log('contributors: bounded plain text, legacy catalogs and catalog-to-state propagation pass');
