@@ -9,6 +9,10 @@ repository and bundled with the application. Absent or malformed optional
 records never prevent a catalog from being used. Original license and
 copyright notices remain in the distributed source and packages.
 
+The original author uses the existing catalog `author` field. Updaters that
+ignore optional `contributors` metadata still provide the author's name to
+the Store; no joint Store/updater upgrade is required to display it.
+
 Everything the head unit installs from the catalog is a **component**: an
 app (`apps/<id>/`) or a root tool (`native/<id>/`, `deploy/`). Each has one
 semantic version, one artifact `<id>@<version>.tgz`, and an entry in the
