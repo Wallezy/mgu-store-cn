@@ -1,5 +1,14 @@
 # Releases: versions, catalog, publishing
 
+CN contributor records are maintained in `release/contributors.json`. The
+optional catalog `contributors` array names each contribution's role, person
+or project, scope and HTTPS source. The updater validates bounded plain text
+and retains it in component metadata. The Store's application details page
+shows the original author; full contribution records are documented in the
+repository and bundled with the application. Absent or malformed optional
+records never prevent a catalog from being used. Original license and
+copyright notices remain in the distributed source and packages.
+
 Everything the head unit installs from the catalog is a **component**: an
 app (`apps/<id>/`) or a root tool (`native/<id>/`, `deploy/`). Each has one
 semantic version, one artifact `<id>@<version>.tgz`, and an entry in the

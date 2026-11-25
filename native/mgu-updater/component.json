@@ -1,7 +1,7 @@
 {
   "id": "mgu-updater",
   "kind": "tool",
-  "version": "0.8.63",
+  "version": "0.8.64",
   "title": "Updater",
   "description": "Installs, updates and removes apps and head-unit tools from its sources",
   "requires": {
@@ -24,6 +24,11 @@
     {
       "path": "catalog.js",
       "from": "js/catalog.js",
+      "mode": "0644"
+    },
+    {
+      "path": "contributors.js",
+      "from": "js/contributors.js",
       "mode": "0644"
     },
     {

@@ -1,6 +1,14 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.50",
+      "changes": [
+        "完善原作者和来源信息，贡献记录随安装包提供。"
+      ],
+      "upstreamVersion": "0.9.45",
+      "cnRevision": 2
+    },
+    {
       "version": "0.9.49",
       "changes": [
         "优化更新进度显示和来源识别。",
@@ -77,6 +85,14 @@
     }
   ],
   "mgu-updater": [
+    {
+      "version": "0.8.64",
+      "changes": [
+        "兼容应用贡献记录，保留旧目录支持。"
+      ],
+      "upstreamVersion": "0.8.62",
+      "cnRevision": 2
+    },
     {
       "version": "0.8.63",
       "changes": [

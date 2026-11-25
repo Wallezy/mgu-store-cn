@@ -1,6 +1,6 @@
 {
   "name": "robertn_store",
-  "version": "0.9.49",
+  "version": "0.9.50",
   "description": "The apps and head-unit tools of every source with their state, and the sources; installs, updates and removes them through mgu-updater",
   "private": false,
   "main": "javascript/runner.js",
@@ -26,7 +26,9 @@
     "javascript",
     "manifest.json",
     "CHANGELOG.md",
-    "LICENSES.txt"
+    "LICENSES.txt",
+    "ATTRIBUTION.json",
+    "CONTRIBUTORS.zh-CN.md"
   ],
   "dependencies": {
     "oap-sdk": "24.10.2"

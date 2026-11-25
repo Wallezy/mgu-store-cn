@@ -1303,6 +1303,7 @@ function indexEntry(item, url) {
     return catalogLib.checkExtras({
         id: item.id, kind: service ? 'tool' : 'app', version: item.version,
         title: text(item.title, 80), description: text(item.description, 1000), author: text(item.author, 80),
+        contributors: item.contributors,
         mguHmi: item.mguHmi !== undefined ? item.mguHmi : service ? undefined : ['ID8'],
         mguProvides: service || undefined, service,
         requires: service ? { 'mgu-deploy': '0.4.0' } : undefined,

@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "components": {
+    "app-privacy": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "应用隐私与原厂 MainApp 兼容补丁。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      }
+    ],
+    "mgu-deploy": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "应用与基础组件的安装、部署和 SDK 链接工具。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      }
+    ],
+    "mgu-python": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "车机 Python 运行环境的打包与部署。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      },
+      {
+        "role": "runtime",
+        "name": "Python Software Foundation / Python contributors",
+        "contribution": "CPython 解释器与标准库；保留 Python 及其第三方许可声明。",
+        "source": "https://github.com/python/cpython"
+      }
+    ],
+    "mgu-render": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "中控绘图服务、显示协议与输入桥接。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      },
+      {
+        "role": "runtime",
+        "name": "IterioDev / cauliflowermossgrape",
+        "contribution": "绘图与输入相关共享实现；各文件作者及第三方来源见 THIRD_PARTY_NOTICES.md。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      }
+    ],
+    "mgu-updater": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "更新服务、依赖安装、下载与恢复机制。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      }
+    ],
+    "mgu-uplink": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "车机网络连接、链路选择与联网支持。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      }
+    ],
+    "robertn_store": [
+      {
+        "role": "author",
+        "name": "Robert Nisipeanu",
+        "contribution": "应用商店、应用和来源管理界面。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      },
+      {
+        "role": "adaptation",
+        "name": "Wallezy",
+        "contribution": "CN 来源、中文发行与兼容修复维护。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      },
+      {
+        "role": "translation",
+        "name": "Wallezy",
+        "contribution": "本发行维护的中文商店文案、应用目录和中文显示适配。",
+        "source": "https://github.com/Wallezy/mgu-store-cn"
+      },
+      {
+        "role": "runtime",
+        "name": "IterioDev / cauliflowermossgrape",
+        "contribution": "商店界面、绘图和应用框架中的复用代码；具体作者和范围见 THIRD_PARTY_NOTICES.md。",
+        "source": "https://github.com/robertnisipeanu/mgu-store"
+      }
+    ]
+  }
+}

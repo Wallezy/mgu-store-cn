@@ -232,6 +232,22 @@ function components(root = REPO) {
     // under deploy/component.json (deploy/README.md, "The deploy tool as a tool").
     tool('deploy', 'mgu-deploy', ['deploy/unit', 'deploy/component.json', 'tools/oap_link.js', 'tools/oap_pack.js']);
     const texts = catalogTexts(out.map((c) => c.id), root);
+    const creditsFile = path.join(root, 'release/contributors.json');
+    const credits = fs.existsSync(creditsFile) ? readJson(creditsFile) : { schema: 1, components: {} };
+    const contributorsOf = require(path.join(REPO, 'native/mgu-updater/js/contributors.js')).contributorsOf;
+    if (credits.schema !== 1 || !credits.components || typeof credits.components !== 'object' || Array.isArray(credits.components)) {
+        throw new Error('release/contributors.json needs schema 1 and components');
+    }
+    Object.keys(credits.components).forEach((id) => {
+        const c = out.find((x) => x.id === id);
+        const records = contributorsOf(credits.components[id]);
+        if (!c || !records.length || !records.some((x) => x.role === 'author') ||
+            JSON.stringify(records) !== JSON.stringify(credits.components[id])) {
+            throw new Error(`release/contributors.json: ${id} needs reviewed author and contribution records`);
+        }
+        c.contributors = records;
+        c.author = records.filter((x) => x.role === 'author').map((x) => x.name).join(' / ');
+    });
     const notesFile = path.join(root, 'release', 'notes.json');
     const notes = fs.existsSync(notesFile) ? readJson(notesFile) : {};
     const normalizeNotes = require(path.join(REPO, 'native/mgu-updater/js/catalog.js')).releaseNotesOf;
@@ -514,7 +530,7 @@ function catalogEntry(c, file) {
     if (c.build) {
         entry.build = c.build;
     }
-    ['requires', 'optional', 'uninstallable', 'mguHmi', 'mguProvides', 'texts', 'releaseNotes'].forEach((k) => {
+    ['requires', 'optional', 'uninstallable', 'mguHmi', 'mguProvides', 'texts', 'releaseNotes', 'author', 'contributors'].forEach((k) => {
         if (c[k] !== undefined) {
             entry[k] = c[k];
         }
@@ -1024,16 +1040,15 @@ function cmdPublish(ids, dryRun, stamped) {
     // the entries carried over list their titles and descriptions in other languages as release/texts has them
     const retexted = [...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)).filter((e) => {
         const c = all.find((x) => x.id === e.id);
-        const want = (c && c.texts) || null;
-        if (JSON.stringify(want) === JSON.stringify(e.texts || null)) {
-            return false;
-        }
-        if (want) {
-            e.texts = want;
-        } else {
-            delete e.texts;
-        }
-        return true;
+        let changed = false;
+        ['texts', 'author', 'contributors'].forEach((key) => {
+            const want = (c && c[key]) || null;
+            if (JSON.stringify(want) === JSON.stringify(e[key] || null)) return;
+            if (want) e[key] = want;
+            else delete e[key];
+            changed = true;
+        });
+        return changed;
     });
     if (!uploads.length && !removed.length && !relisted.length && !retexted.length) {
         console.log('nothing new to publish');

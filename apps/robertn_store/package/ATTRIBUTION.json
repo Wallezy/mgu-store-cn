@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "component": "robertn_store",
+  "contributors": [
+    {
+      "role": "author",
+      "name": "Robert Nisipeanu",
+      "contribution": "应用商店、应用和来源管理界面。",
+      "source": "https://github.com/robertnisipeanu/mgu-store"
+    },
+    {
+      "role": "adaptation",
+      "name": "Wallezy",
+      "contribution": "CN 来源、中文发行与兼容修复维护。",
+      "source": "https://github.com/Wallezy/mgu-store-cn"
+    },
+    {
+      "role": "translation",
+      "name": "Wallezy",
+      "contribution": "本发行维护的中文商店文案、应用目录和中文显示适配。",
+      "source": "https://github.com/Wallezy/mgu-store-cn"
+    },
+    {
+      "role": "runtime",
+      "name": "IterioDev / cauliflowermossgrape",
+      "contribution": "商店界面、绘图和应用框架中的复用代码；具体作者和范围见 THIRD_PARTY_NOTICES.md。",
+      "source": "https://github.com/robertnisipeanu/mgu-store"
+    }
+  ]
+}

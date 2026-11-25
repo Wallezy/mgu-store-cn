@@ -14,6 +14,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const KINDS = ['app', 'tool'];
 const HMIS = ['ID7', 'ID8'];
 const PROVIDES = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const { contributorsOf } = require('./contributors');
 
 /* mguHmi: the head units a component is for, ["ID7"], ["ID8"] or both;
  * null when it does not say. */
@@ -96,6 +97,7 @@ function checkExtras(c) {
         title: typeof c.title === 'string' && c.title ? c.title : c.id,
         description: typeof c.description === 'string' ? c.description : '',
         releaseNotes: releaseNotesOf(c.releaseNotes, c.version),
+        contributors: contributorsOf(c.contributors),
         texts: textsOf(c.texts)
     });
 }
@@ -207,6 +209,7 @@ function plan(entries, installed) {
             uninstallable: c.uninstallable,
             description: c.description || '',
             releaseNotes: c.releaseNotes || [],
+            contributors: c.contributors || [],
             texts: c.texts || null,
             author: c.author || '',
             mguHmi: c.mguHmi,
