@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "upstreamRepository": "robertnisipeanu/mgu-store",
+  "upstreamCommit": "37702a880f1ed5fd346f4c944127fb276920be9c",
+  "distribution": "CN",
+  "externalStatistics": "disabled; statistics implementation excluded",
+  "runtimeValidation": "pending",
+  "components": {
+    "app-privacy": {
+      "version": "1.7.6",
+      "upstreamVersion": "1.7.5",
+      "cnRevision": 1
+    },
+    "mgu-deploy": {
+      "version": "0.8.32",
+      "upstreamVersion": "0.8.31",
+      "cnRevision": 1
+    },
+    "mgu-render": {
+      "version": "0.6.29",
+      "upstreamVersion": "0.6.26",
+      "cnRevision": 1
+    },
+    "mgu-updater": {
+      "version": "0.8.63",
+      "upstreamVersion": "0.8.62",
+      "cnRevision": 1
+    },
+    "mgu-uplink": {
+      "version": "0.7.16",
+      "upstreamVersion": "0.7.15",
+      "cnRevision": 1
+    },
+    "robertn_store": {
+      "version": "0.9.49",
+      "upstreamVersion": "0.9.45",
+      "cnRevision": 1
+    }
+  }
+}
