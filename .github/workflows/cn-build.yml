@@ -51,6 +51,13 @@ jobs:
               files = subprocess.check_output(["git", "diff", "--name-only", base, "HEAD"], text=True).splitlines()
               for name in files:
                   parts = pathlib.PurePosixPath(name).parts
+              if parts and parts[0] in ("release", "tools", ".github"):
+                  manifests = list(pathlib.Path("native").glob("*/component.json"))
+                  manifests += list(pathlib.Path("apps").glob("*/mgu-app.json"))
+                  manifests += [pathlib.Path("deploy/component.json")]
+                  for item in manifests:
+                      ids.add(json.loads(item.read_text())["id"])
+                  break
                   if len(parts) > 2 and parts[0] in ("native", "apps"):
                       folder = pathlib.Path(*parts[:2])
                       manifest = folder / ("component.json" if parts[0] == "native" else "mgu-app.json")
