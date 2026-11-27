@@ -14,8 +14,8 @@ DOCKER  ?= docker
 CFLAGS  ?= -O2 -g0 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation -Werror
 CFLAGS  += -std=gnu11 -Isrc -Ibuild/$(OUT)/protocol
 LIBS     = -lwayland-client -lwayland-egl -lEGL -lGLESv2 -lm -ldl
-SRC      = $(wildcard src/*.c)
-HDR      = $(wildcard src/*.h)
+SRC      = $(sort $(wildcard src/*.c))
+HDR      = $(sort $(wildcard src/*.h))
 XML      = protocol/ivi-application.xml protocol/ivi-controller.xml protocol/wayland-drm.xml
 GEN_DIR  = build/$(OUT)/protocol
 GEN_H    = $(XML:protocol/%.xml=$(GEN_DIR)/%-client-protocol.h)
