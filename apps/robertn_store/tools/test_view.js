@@ -29,6 +29,9 @@ const cases = [
     [JSON.stringify(parseSource('https://github.com/owner/repo', false)), 'null'],
     [JSON.stringify(parseSource('https://raw.githubusercontent.com/owner/repo/main/catalog.json', false)), 'null'],
     [JSON.stringify(parseSource('https://owner.github.io/catalog.json', false)), 'null'],
+    [JSON.stringify(parseSource('owner.github.io/catalog.json', false)), 'null'],
+    [JSON.stringify(parseSource('mgu.walle.pw/mgu/cn/mgu-store/catalog.json', false)),
+        '{"type":"https","url":"https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json"}'],
     [JSON.stringify(parseSource('https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json', false)),
         '{"type":"https","url":"https://mgu.walle.pw/mgu/cn/mgu-store/catalog.json"}'],
     [parsed('someone/idrive7-apps'), '{"type":"github","repo":"someone/idrive7-apps"}'],
@@ -67,6 +70,13 @@ const cases = [
     [parsed('https://github.com'), 'null'],
     [parsed('https://raw.githubusercontent.com/owner/repo/main/catalog.json'),
         '{"type":"https","url":"https://raw.githubusercontent.com/owner/repo/main/catalog.json"}'],
+    // host/path without https://: a host name first, which no GitHub owner is
+    [parsed('example.org/k7q2m9'), '{"type":"https","url":"https://example.org/k7q2m9"}'],
+    [parsed(' apps.example.org:8443/c.json '), '{"type":"https","url":"https://apps.example.org:8443/c.json"}'],
+    [parsed('example.org/'), '{"type":"https","url":"https://example.org/"}'],
+    [parsed('example.org'), 'null'],
+    [parsed('www.github.com/owner/repo'), '{"type":"github","repo":"owner/repo"}'],
+    [parsed('github.com/owner'), 'null'],
     // a refused Remove: the updater's keptBy names the component that needs it, shown with its title in the rows
     [neededBy('Waze on cluster needs cluster-render'), 'Waze on cluster'],
     [neededBy('Waze on cluster needs a renderer: remove it first, or install another renderer'), 'Waze on cluster'],
