@@ -2,11 +2,11 @@
   "robertn_store": [
     {
       "version": "0.9.51",
-      "upstreamVersion": "0.9.46",
-      "cnRevision": 1,
       "changes": [
         "添加下载源时可省略 https://，保留国内版来源校验。"
-      ]
+      ],
+      "upstreamVersion": "0.9.46",
+      "cnRevision": 1
     },
     {
       "version": "0.9.50",
@@ -95,11 +95,11 @@
   "mgu-updater": [
     {
       "version": "0.8.65",
-      "upstreamVersion": "0.8.63",
-      "cnRevision": 1,
       "changes": [
         "手机管理页面支持省略 https:// 添加下载源。"
-      ]
+      ],
+      "upstreamVersion": "0.8.63",
+      "cnRevision": 1
     },
     {
       "version": "0.8.64",
