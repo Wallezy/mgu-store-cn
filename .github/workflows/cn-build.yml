@@ -91,4 +91,7 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "cn-release-$GITHUB_SHA-a" --dir a
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "cn-release-$GITHUB_SHA-b" --dir b
-          diff -qr a b
+          if ! diff -qr a b; then
+            diff -u a/catalog.json b/catalog.json || true
+            exit 1
+          fi
