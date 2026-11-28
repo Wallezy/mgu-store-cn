@@ -57,10 +57,6 @@ jobs:
           node-version: 22.12.0
       - run: sh native/app-privacy/test/run.sh
   deployment:
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -69,25 +65,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.12.0
-      - name: Select a disjoint share of every deployment suite
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: |
-          python3 - <<'PYTHON'
-          import os, pathlib, re
-          source = pathlib.Path("deploy/test/run.js").read_text()
-          match = re.search(r"const SUITES = \[([\s\S]*?)\n\];", source)
-          assert match, "Deployment suite list is missing"
-          suites = [s.strip() for s in match[1].split(",") if s.strip()]
-          assert len(suites) >= 50 and len(suites) == len(set(suites))
-          assert all(re.fullmatch(r"test[A-Za-z0-9_]+", s) for s in suites)
-          groups = [suites[i::4] for i in range(4)]
-          assert sorted(s for group in groups for s in group) == sorted(suites)
-          selected = groups[int(os.environ["SHARD"])]
-          with open(os.environ["GITHUB_ENV"], "a") as output:
-              output.write("MGU_TEST_ONLY=" + ",".join(selected) + "\n")
-          print(f"Running {len(selected)} of {len(suites)} suites; all four groups cover the full list")
-          PYTHON
       - run: sh deploy/test/run.sh
   renderer:
     runs-on: ubuntu-24.04
