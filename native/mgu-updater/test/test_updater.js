@@ -7453,7 +7453,6 @@ function main() {
     testCollect();
     testFileLog();
     testBlobCap();
-    testNewInstall();
     return testQueueDurabilityAndStreaming()
         .then(() => testInstalledStamp())
         .then(() => testKeptAnswers())

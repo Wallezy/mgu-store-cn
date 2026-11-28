@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "repository": "robertnisipeanu/mgu-store",
+  "commit": "624a130daa2372cbc85bf82fcb7d3a4769a04df4",
+  "scope": "Reviewed runtime and release-tool performance updates",
+  "excluded": [
+    "external-statistics"
+  ],
+  "preserved": [
+    "CN distribution source policy",
+    "CN contributor display",
+    "Chinese title atlas",
+    "release notes",
+    "read-only edition checks"
+  ]
+}
