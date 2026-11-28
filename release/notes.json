@@ -1,6 +1,15 @@
 {
   "robertn_store": [
     {
+      "version": "0.9.52",
+      "changes": [
+        "降低内存占用，改善列表滚动与图标加载速度。",
+        "保留清晰中文标题、作者署名与更新说明。"
+      ],
+      "upstreamVersion": "0.9.47",
+      "cnRevision": 1
+    },
+    {
       "version": "0.9.51",
       "changes": [
         "添加下载源时可省略 https://，保留国内版来源校验。"
@@ -93,6 +102,14 @@
     }
   ],
   "mgu-updater": [
+    {
+      "version": "0.8.66",
+      "changes": [
+        "加快目录检查和下载，完善更新队列交接与重启恢复。"
+      ],
+      "upstreamVersion": "0.8.64",
+      "cnRevision": 1
+    },
     {
       "version": "0.8.65",
       "changes": [
@@ -190,6 +207,14 @@
   ],
   "mgu-deploy": [
     {
+      "version": "0.8.33",
+      "changes": [
+        "降低安装与备份的内存和写盘开销，完善批量移除恢复。"
+      ],
+      "upstreamVersion": "0.8.32",
+      "cnRevision": 1
+    },
+    {
       "version": "0.8.32",
       "changes": [
         "完善启动检查与更新锁处理。",
@@ -262,6 +287,14 @@
   ],
   "mgu-render": [
     {
+      "version": "0.6.30",
+      "changes": [
+        "降低空闲资源占用，改善字体与画面资源回收。"
+      ],
+      "upstreamVersion": "0.6.27",
+      "cnRevision": 1
+    },
+    {
       "version": "0.6.29",
       "changes": [
         "减少重复画面传输，优化绘制效率。"
@@ -330,6 +363,14 @@
   ],
   "mgu-uplink": [
     {
+      "version": "0.7.17",
+      "changes": [
+        "降低后台轮询开销，完善设备移除与无线连接失败后的状态保留。"
+      ],
+      "upstreamVersion": "0.7.16",
+      "cnRevision": 1
+    },
+    {
       "version": "0.7.16",
       "changes": [
         "自动查找已保存的无线网络，改善联网恢复。",
@@ -356,6 +397,14 @@
     }
   ],
   "app-privacy": [
+    {
+      "version": "1.7.7",
+      "changes": [
+        "加快启动校验，完善补丁文件的安全写入。"
+      ],
+      "upstreamVersion": "1.7.6",
+      "cnRevision": 1
+    },
     {
       "version": "1.7.6",
       "changes": [

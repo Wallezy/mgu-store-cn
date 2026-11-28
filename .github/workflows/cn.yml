@@ -25,6 +25,13 @@ jobs:
         run: python3 -m unittest discover -s release/test -p 'test_*.py' -v
       - name: Contributor records
         run: node release/test/contributors_test.js
+      - name: App packaging and release planning
+        run: node tools/test/run.js
+      - name: Store interface and localization
+        run: |
+          node apps/robertn_store/tools/test_store.js
+          node apps/robertn_store/tools/test_view.js
+          node apps/robertn_store/tools/test_i18n.js
       - name: Updater compatibility
         run: sh native/mgu-updater/test/run.sh
       - name: Local installer
@@ -33,4 +40,24 @@ jobs:
         run: node deploy/test/edition_installer.js
       - name: Deployment and migration transactions
         run: sh deploy/test/run.sh
+      - name: App privacy compatibility
+        run: sh native/app-privacy/test/run.sh
+  renderer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: make -C native/mgu-render test
+  uplink:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.27.2
+          cache: false
+      - run: make -C native/mgu-uplink test
 # These fixtures do not set release-check/cn-integration.

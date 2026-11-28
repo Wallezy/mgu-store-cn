@@ -307,6 +307,11 @@ function writeAtomic(file, text) {
 
 /* writeAtomic, on disk before it returns: the file and its folder synced. */
 function writeDurable(file, text) {
+    try {
+        if (fs.readFileSync(file).equals(Buffer.from(text))) {
+            return;
+        }
+    } catch (e) { /* not there yet */ }
     const tmp = `${file}.tmp`;
     const fd = fs.openSync(tmp, 'w', 0o644);
     try {
@@ -796,7 +801,8 @@ class Scratch {
  * run(msg, onEvent, onEnd): onEvent(ev) for each of the job's events
  * until onEnd(final event); onEnd(null, error or null) when the child
  * ends first. */
-const FETCH_IDLE_MS = 10000;
+const FETCH_IDLE_MS = 90000;
+const ICON_PARALLEL = 4;
 class FetchWorker {
     constructor(opts) {
         this.uid = opts.uid;
@@ -1111,6 +1117,10 @@ class Fetcher {
                     resolve(Object.assign(Buffer.alloc(0), { headers: result.headers || {}, notModified: true }));
                 } else if (result && result.done && files) {
                     resolve(got);
+                } else if (result && result.done && job.to) {
+                    sourcesLib.copyFileHashed(dest, job.to, maxBytes).then((info) => {
+                        resolve(Object.assign(info, { headers: result.headers || {}, resumed: !!result.resumed }));
+                    }, reject);
                 } else if (result && result.done) {
                     try {
                         resolve(Object.assign(this.collect(dest, maxBytes), { headers: result.headers || {}, resumed: !!result.resumed }));
@@ -1162,7 +1172,8 @@ class Fetcher {
             id = w.run({ job: { url, headers, dest, maxBytes, dns: lease.dns, lease: this.conf.lease || undefined, ca: this.ca,
                 method: job.method || 'GET', body: job.body, keep: job.keep || [], proxy: this.conf.proxy || undefined,
                 denyGithub: cnSources.enabled(this.conf),
-                immutable: !!job.immutable, fresh: !!(job.fresh || this.fresh),
+                connectMs: job.connectMs, idleMs: job.idleMs,
+                immutable: !!job.immutable, fresh: !!job.fresh,
                 files: files ? files.map((f) => ({ url: f.url, dest: f.dest, maxBytes: f.maxBytes })) : undefined, parallel: job.parallel } },
             onEvent, onEnd);
         }).then((bytes) => {
@@ -1262,10 +1273,42 @@ function mainappReady(conf) {
     }
 }
 
+const mainappPidCache = new Map();
+
+function probeMainapp(proc, pid) {
+    try {
+        const argv = fs.readFileSync(path.join(proc, pid, 'cmdline'), 'utf8').split('\0');
+        let i = 1;
+        for (; i < argv.length && argv[i].charAt(0) === '-'; i++) {
+            if (argv[i] === '-r' || argv[i] === '--require') {
+                i++;
+            }
+        }
+        const script = argv[i] || '';
+        if (/(^|\/)node$/.test(argv[0]) && /\/oap-mainapp(21)?\/src\/main\.js$/.test(script)) {
+            let start = '';
+            try {
+                const stat = fs.readFileSync(path.join(proc, pid, 'stat'), 'utf8');
+                start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] || '';
+            } catch (e) { /* the cmdline alone */ }
+            return `${pid}:${start}`;
+        }
+    } catch (e) { /* gone meanwhile */ }
+    return null;
+}
+
 /* The app manager's process (node running its main.js) as "<pid>:<start
- * time>", '-' without one. */
+ * time>", '-' without one. Verifies the cached PID directly before scanning proc. */
 function mainappProcess(conf) {
     const proc = conf.proc || '/proc';
+    const cached = mainappPidCache.get(proc);
+    if (cached) {
+        const hit = probeMainapp(proc, cached);
+        if (hit) {
+            return hit;
+        }
+        mainappPidCache.delete(proc);
+    }
     let names = [];
     try {
         names = fs.readdirSync(proc).filter((n) => /^\d+$/.test(n));
@@ -1273,24 +1316,14 @@ function mainappProcess(conf) {
         return '-';
     }
     for (const pid of names) {
-        try {
-            const argv = fs.readFileSync(path.join(proc, pid, 'cmdline'), 'utf8').split('\0');
-            let i = 1;
-            for (; i < argv.length && argv[i].charAt(0) === '-'; i++) {
-                if (argv[i] === '-r' || argv[i] === '--require') {
-                    i++;
-                }
+        const hit = probeMainapp(proc, pid);
+        if (hit) {
+            if (mainappPidCache.size >= 16) {
+                mainappPidCache.clear();
             }
-            const script = argv[i] || '';
-            if (/(^|\/)node$/.test(argv[0]) && /\/oap-mainapp(21)?\/src\/main\.js$/.test(script)) {
-                let start = '';
-                try {
-                    const stat = fs.readFileSync(path.join(proc, pid, 'stat'), 'utf8');
-                    start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] || '';
-                } catch (e) { /* the cmdline alone */ }
-                return `${pid}:${start}`;
-            }
-        } catch (e) { /* gone meanwhile */ }
+            mainappPidCache.set(proc, pid);
+            return hit;
+        }
     }
     return '-';
 }
@@ -2068,7 +2101,7 @@ class Updater {
         this.applySeen = Object.keys(this.applySeen).filter((k) => this.applySeen[k] === at)
             .reduce((o, k) => Object.assign(o, { [k]: at }), { [id]: at });
         mkdirp(this.conf.state_dir, 0o755);
-        writeAtomic(path.join(this.conf.state_dir, 'apply-seen.json'), JSON.stringify(this.applySeen));
+        writeDurable(path.join(this.conf.state_dir, 'apply-seen.json'), JSON.stringify(this.applySeen));
     }
 
     /* Why installed component id does not work, as the deploy tool says, or null. */
@@ -2411,11 +2444,13 @@ class Updater {
                         components: rt.components, checkedAt: at, token: rt.tokenId, public: rt.public,
                         memo: rt.memo && { key: rt.memo.key, skipped: cat.skipped || [], version: this.version } });
                     let was = null;
+                    let prevText = null;
                     try {
-                        was = JSON.parse(fs.readFileSync(this.cacheFile(id), 'utf8')).checkedAt;
+                        prevText = fs.readFileSync(this.cacheFile(id), 'utf8');
+                        was = JSON.parse(prevText).checkedAt;
                     } catch (e) { /* not written yet */ }
                     mkdirp(path.dirname(this.cacheFile(id)), 0o700);
-                    if (!was || fs.readFileSync(this.cacheFile(id), 'utf8') !== listing(was)) {
+                    if (!was || prevText !== listing(was)) {
                         writeAtomic(this.cacheFile(id), listing(rt.checkedAt));
                     }
                     writeAtomic(this.checkedFile(id), `${rt.checkedAt}\n`);
@@ -2531,6 +2566,7 @@ class Updater {
      * listed without it. */
     fetchIcons(rt) {
         if (rt.icons) {
+            rt.iconsAgain = true;
             return rt.icons;
         }
         const failed = this.iconFailures();
@@ -2538,8 +2574,14 @@ class Updater {
             const f = failed[this.iconFailureKey(rt.def.id, c)];
             return !fs.existsSync(this.iconFile(rt.def.id, c)) && !(f && (f.missing || f.at > Date.now() - 86400000));
         };
-        rt.icons = rt.components.filter((c) => c.icon && due(c)).reduce((p, c) => p
-            .then(() => rt.reader.icon(c))
+        const todo = rt.components.filter((c) => c.icon && due(c));
+        if (!todo.length) {
+            return Promise.resolve();
+        }
+        let anyFetched = false;
+        let anyFailed = false;
+        rt.iconsAgain = false;
+        rt.icons = sourcesLib.mapLimit(todo, ICON_PARALLEL, (c) => rt.reader.icon(c)
             .then((b) => {
                 if (!sourcesLib.isIcon(b)) {
                     throw Object.assign(new Error(`not a PNG of at most ${sourcesLib.ICON_BYTES} bytes`), { missing: true });
@@ -2548,15 +2590,27 @@ class Updater {
                     throw Object.assign(new Error('does not match its sha256'), { missing: true });
                 }
                 this.keepIcon(this.iconFile(rt.def.id, c), b);
-                this.changed();
+                anyFetched = true;
             })
             .catch((err) => {
                 failed[this.iconFailureKey(rt.def.id, c)] = { at: Date.now(),
                     missing: !!(err.missing || err.tooBig || err.status === 404 || err.code === 'ENOENT') };
-                this.saveIconFailures();
+                anyFailed = true;
                 console.log(`source ${rt.def.id}: icon of ${c.id}: ${err.message}`);
-            }), Promise.resolve()).then(() => {
+            })).then(() => {
+            if (anyFailed) {
+                this.saveIconFailures();
+            }
+            if (anyFetched) {
+                this.changed();
+            }
+            const again = rt.iconsAgain;
             rt.icons = null;
+            rt.iconsAgain = false;
+            if (again) {
+                return this.fetchIcons(rt);
+            }
+            return undefined;
         });
         return rt.icons;
     }
@@ -2698,11 +2752,8 @@ class Updater {
         }
         this.checking = uids.then(() => Promise.all(this.defs().map((d) => this.checkSource(d.id))))
             .then(() => {
-                // with every source read, which row is the installed one is settled: once the
-                // fetches under way are through, the icons of each source read now are looked at again
-                // (in the background); one that could not be read (offline, a refused token) is left alone
                 const rts = this.defs().map((d) => this.src.get(d.id)).filter((rt) => rt && rt.status === 'ok');
-                this.iconPass = Promise.all(rts.map((rt) => rt.icons)).then(() => Promise.all(rts.map((rt) => this.fetchIcons(rt))));
+                this.iconPass = Promise.all(rts.map((rt) => rt.icons));
                 return this.pruneIcons();
             })
             // with or without a refresh: the apps the sources list are taken over and lost ones put back
@@ -3052,7 +3103,7 @@ class Updater {
     startStoreTrial(version, auto) {
         this.storeTrial = { version, tileBefore: storeTileShows(this.conf), seenAt: 0, since: 0, auto: !!auto };
         mkdirp(this.conf.state_dir, 0o755);
-        writeAtomic(path.join(this.conf.state_dir, 'store-trial.json'), JSON.stringify(Object.assign({ version, tileBefore: this.storeTrial.tileBefore },
+        writeDurable(path.join(this.conf.state_dir, 'store-trial.json'), JSON.stringify(Object.assign({ version, tileBefore: this.storeTrial.tileBefore },
             auto ? { auto: true } : {})));
     }
 
@@ -3413,11 +3464,34 @@ class Updater {
         if (this.editionMigration()) {
             return;
         }
-        const needsSelf = (q) => {
+        const entryNeedsSelf = (entry, source, seen) => {
+            if (!entry || !entry.requires) {
+                return false;
+            }
+            return Object.keys(entry.requires).some((dep) => {
+                const min = entry.requires[dep];
+                if (this.requirementMet(dep, min)) {
+                    return false;
+                }
+                if (dep === SELF) {
+                    return true;
+                }
+                if (seen.has(dep)) {
+                    return false;
+                }
+                seen.add(dep);
+                const queued = this.queue.find((x) => x.op === 'install' && (x.unit || x.id) === dep);
+                if (queued) {
+                    return needsSelf(queued, seen);
+                }
+                const found = this.findRequirement(dep, min, source);
+                return !!found && entryNeedsSelf(found.entry, found.source, seen);
+            });
+        };
+        const needsSelf = (q, seen) => {
             const rt = q.op === 'install' && q.id !== SELF && this.src.get(q.source);
             const own = rt && rt.components.find((c) => c.id === (q.listed || q.id));
-            const min = own && own.requires && own.requires[SELF];
-            return !!min && !this.requirementMet(SELF, min);
+            return entryNeedsSelf(own, q.source, seen || new Set([q.unit || q.id]));
         };
         const store = (q) => q.op === 'install' && (q.unit || q.id) === this.conf.store_app;
         let i = this.queue.findIndex((q) => q.op === 'install' && q.id === this.conf.deploy_tool && !needsSelf(q));
@@ -3450,12 +3524,12 @@ class Updater {
 
     saveOrigins() {
         mkdirp(this.conf.state_dir, 0o755);
-        writeAtomic(path.join(this.conf.state_dir, 'origins.json'), JSON.stringify(this.origins, null, 1));
+        writeDurable(path.join(this.conf.state_dir, 'origins.json'), JSON.stringify(this.origins, null, 1));
     }
 
     saveAliases() {
         mkdirp(this.conf.state_dir, 0o755);
-        writeAtomic(path.join(this.conf.state_dir, 'aliases.json'), JSON.stringify(this.aliases, null, 1));
+        writeDurable(path.join(this.conf.state_dir, 'aliases.json'), JSON.stringify(this.aliases, null, 1));
     }
 
     /* The deploy tool's SDK donor (`sdk-donor --json`: { path, module }), for
@@ -3485,7 +3559,7 @@ class Updater {
      * entry: the same under the id it installs as, which for an app placed
      * beside another one's id (place) is built from a copy made over to
      * that id (sourcesLib.renameApp), and must come out as that id. */
-    artifact(rt, entry, own) {
+    artifact(rt, entry, own, opts) {
         // a download's own total: a whole repo read after some of its files has another
         const progress = (bytes, total) => {
             this.busy.progress = bytes;
@@ -3495,7 +3569,7 @@ class Updater {
             this.progressed();
         };
         if (!entry.path) {
-            return rt.reader.artifact(entry, progress);
+            return rt.reader.artifact(entry, progress, opts);
         }
         // a build script needs the whole repo, or its folder and the shared files it names; packing, the
         // component's folder. A public repo's are read file by file (sources.js partFiles)
@@ -3538,7 +3612,7 @@ class Updater {
                     // a network build's proxy runs as the fetch uid: once the uplink lets it out
                     .then((donor) => new Promise((resolve) => setTimeout(resolve, Math.max(0, (this.fetcher.notBefore || 0) - Date.now())))
                         .then(() => donor))
-                    .then((donor) => this.buildIn(made, donor)));
+                    .then((donor) => this.buildIn(made, donor, opts && opts.to)));
             // a build that fails with only the files it names is run again with the whole repo
             return build(first, () => donorLookup)
                 .catch((err) => {
@@ -3554,7 +3628,7 @@ class Updater {
                     return files(null).then((whole) => {
                         this.busy.phase = 'build';
                         this.changed();
-                        return build(whole, () => this.sdkDonor());
+                        return build(whole, () => donorLookup);
                     });
                 })
                 .then((bytes) => {
@@ -3564,7 +3638,7 @@ class Updater {
                     built();
                     throw err;
                 })
-                .then((bytes) => (own.id === entry.id ? bytes : sourcesLib.packageId(bytes, Number(this.conf.build_max_bytes) || 200 << 20)
+                .then((bytes) => (own.id === entry.id ? bytes : sourcesLib.packageId(Buffer.isBuffer(bytes) ? bytes : bytes.file, Number(this.conf.build_max_bytes) || 200 << 20)
                     .then((out) => {
                         if (out !== entry.id) {
                             throw new Error(`the build of ${own.id} as ${entry.id} made ${out}: it cannot install beside ${own.id}`);
@@ -3583,12 +3657,12 @@ class Updater {
     /* A build of made ({ entry, files }) with donor: in RAM with three times
      * its repo's size as its room when that fits, run again in state_dir
      * when it needs more. */
-    buildIn(made, donor) {
+    buildIn(made, donor, to) {
         const repo = made.files.reduce((n, f) => n + f.data.length, 0);
         const need = Math.min(3 * repo, Number(this.conf.build_max_bytes) || Infinity);
         const room = this.scratch.take(need);
         const run = (r) => runBuild({ conf: this.conf, entry: made.entry, files: made.files, donor: donor.path, sdk: donor.module,
-            lease: readLease(this.conf), log: (l) => console.log(l), base: r.dir, maxBytes: r.ram ? need : 0 });
+            lease: readLease(this.conf), log: (l) => console.log(l), base: r.dir, maxBytes: r.ram ? need : 0, to });
         return run(room).then((bytes) => {
             room.release();
             return bytes;
@@ -3607,8 +3681,18 @@ class Updater {
     install(item) {
         // the row's id; the id it installs as
         const key = item.id;
-        const matches = (bytes) => !((entry.artifact.size && bytes.length !== entry.artifact.size) ||
-            (entry.artifact.sha256 && sha256(bytes) !== entry.artifact.sha256));
+        const sizeOf = (got) => (Buffer.isBuffer(got) ? got.length : got.size);
+        const hashOf = (got) => {
+            if (!Buffer.isBuffer(got)) {
+                return got.sha256;
+            }
+            if (!got._sha256) {
+                got._sha256 = sha256(got);
+            }
+            return got._sha256;
+        };
+        const matches = (got) => !((entry.artifact.size && sizeOf(got) !== entry.artifact.size) ||
+            (entry.artifact.sha256 && hashOf(got) !== entry.artifact.sha256));
         const id = item.unit || item.id;
         const rt = this.src.get(item.source);
         const own = rt && rt.components.find((c) => c.id === (item.listed || key));
@@ -3626,6 +3710,23 @@ class Updater {
         // the checked bytes, root's alone, are what the deploy tool reads: in RAM when they fit
         let room = null;
         let verified = null;
+        const releaseVerified = () => {
+            if (verified) {
+                rmIfThere(verified);
+                verified = null;
+            }
+            if (room) {
+                room.release();
+                room = null;
+            }
+        };
+        const allocVerified = (size) => {
+            releaseVerified();
+            room = this.scratch.take(size);
+            verified = path.join(room.dir, 'verified', entry.artifact.name);
+            mkdirp(path.dirname(verified), 0o700);
+            return verified;
+        };
         const trial = path.join(this.conf.tool_root, SELF, 'trial');
         const self = id === SELF;
         const toolDir = path.join(this.conf.tool_root, id);
@@ -3648,43 +3749,35 @@ class Updater {
                 if (lead && (lead.entry.unlisted || this.originOf(lead.source) !== this.originOf(item.source))) {
                     throw new Error(this.installedWhy(id, lead));
                 }
-                return this.artifact(rt, entry, own);
+                return this.artifact(rt, entry, own, { to: allocVerified });
             })
-            .then((bytes) => {
-                if (!bytes.resumed || matches(bytes)) {
-                    return bytes;
+            .then((got) => {
+                if (!got.resumed || matches(got)) {
+                    return got;
                 }
                 console.log(`${id}@${entry.version}: the resumed download does not match the catalog; downloading it again whole`);
-                this.fetcher.fresh = true;
-                const again = () => {
-                    this.fetcher.fresh = false;
-                };
-                return this.artifact(rt, entry, own).then((b) => {
-                    again();
-                    return b;
-                }, (err) => {
-                    again();
-                    throw err;
-                });
+                releaseVerified();
+                return this.artifact(rt, entry, own, { fresh: true, to: allocVerified });
             })
-            .then((bytes) => {
+            .then((got) => {
                 this.busy.phase = 'verify';
                 this.changed();
                 console.log(`${id}@${entry.version}: verify`);
-                if (!matches(bytes)) {
+                if (!matches(got)) {
                     throw new Error('download does not match the catalog (size or sha256)');
                 }
-                room = this.scratch.take(bytes.length);
-                verified = path.join(room.dir, 'verified', entry.artifact.name);
-                mkdirp(path.dirname(verified), 0o700);
-                fs.writeFileSync(verified, bytes, { mode: 0o600 });
+                if (Buffer.isBuffer(got)) {
+                    fs.writeFileSync(allocVerified(got.length), got, { mode: 0o600 });
+                } else {
+                    verified = got.file;
+                }
                 if (!fs.existsSync(this.conf.deploy)) {
                     throw new Error(`deploy tool missing (${this.conf.deploy})`);
                 }
                 // a source package is built by the deploy tool, then installed
                 this.busy.phase = entry.build === 'unit' && !entry.script ? 'build' : 'install';
                 this.changed();
-                console.log(`${id}@${entry.version}: install (sha256 ${sha256(bytes).slice(0, 12)})`);
+                console.log(`${id}@${entry.version}: install (sha256 ${hashOf(got).slice(0, 12)})`);
                 try {
                     before = fs.readlinkSync(path.join(toolDir, 'current'));
                 } catch (e) { /* not installed yet */ }
@@ -4041,18 +4134,20 @@ class Updater {
                     this.saveBoot();
                     return 0;
                 }
-                const bytes = fs.readFileSync(item.package);
-                room = this.scratch.take(bytes.length);
-                verified = path.join(room.dir, 'verified', path.basename(item.package));
-                mkdirp(path.dirname(verified), 0o700);
-                fs.writeFileSync(verified, bytes, { mode: 0o600 });
-                console.log(`${item.id}@${item.version}: install from its kept package`);
-                return this.deploy(verified, false, true, true).then((code) => {
-                    if (code !== 0 && code !== GUARD_STOPPED) {
-                        throw new Error(`${this.deployError || 'install failed'}; ${item.id} stays removed until it is installed again`);
-                    }
-                    console.log(code === GUARD_STOPPED ? `${item.id}@${item.version}: the deploy tool's MainApp guard stopped it; ` +
-                        'what it did stays until the next start' : `installed ${item.id}@${item.version} again`);
+                return sourcesLib.copyFileHashed(item.package, (size) => {
+                    room = this.scratch.take(size);
+                    verified = path.join(room.dir, 'verified', path.basename(item.package));
+                    mkdirp(path.dirname(verified), 0o700);
+                    return verified;
+                }).then(() => {
+                    console.log(`${item.id}@${item.version}: install from its kept package`);
+                    return this.deploy(verified, false, true, true).then((code) => {
+                        if (code !== 0 && code !== GUARD_STOPPED) {
+                            throw new Error(`${this.deployError || 'install failed'}; ${item.id} stays removed until it is installed again`);
+                        }
+                        console.log(code === GUARD_STOPPED ? `${item.id}@${item.version}: the deploy tool's MainApp guard stopped it; ` +
+                            'what it did stays until the next start' : `installed ${item.id}@${item.version} again`);
+                    });
                 });
             })
             .catch((err) => {
@@ -4350,14 +4445,39 @@ class Updater {
                 group('SIGTERM');
                 kill = setTimeout(() => group('SIGKILL'), 10000);
             }, limitS * 1000);
-            const log = (d) => d.toString().split('\n').filter(Boolean).forEach((l) => {
-                console.log(`deploy: ${l}`);
-                const m = /^mgu-deploy: (.+)/.exec(l);
-                if (m) {
-                    this.deployError = m[1];
-                }
-            });
+            const feed = (stream) => {
+                let buf = '';
+                const handle = (l) => {
+                    if (!l) {
+                        return;
+                    }
+                    console.log(`deploy: ${l}`);
+                    const m = /^mgu-deploy: (.+)/.exec(l);
+                    if (m) {
+                        this.deployError = m[1];
+                    }
+                };
+                stream.setEncoding('utf8');
+                stream.on('data', (d) => {
+                    buf += d;
+                    let nl;
+                    while ((nl = buf.indexOf('\n')) >= 0) {
+                        handle(buf.slice(0, nl).replace(/\r$/, ''));
+                        buf = buf.slice(nl + 1);
+                    }
+                });
+                return () => {
+                    if (buf) {
+                        handle(buf.replace(/\r$/, ''));
+                        buf = '';
+                    }
+                };
+            };
+            const flushOut = feed(child.stdout);
+            const flushErr = feed(child.stderr);
             const done = (code) => {
+                flushOut();
+                flushErr();
                 clearTimeout(timer);
                 if (kill) {
                     clearTimeout(kill);
@@ -4370,8 +4490,6 @@ class Updater {
                 }
                 resolve(code);
             };
-            child.stdout.on('data', log);
-            child.stderr.on('data', log);
             child.on('error', () => done(1));
             child.on('close', (code) => done(code));
         });
@@ -4749,7 +4867,7 @@ class Updater {
         }
         this.webEnabled = enabled;
         mkdirp(this.conf.state_dir, 0o755);
-        writeAtomic(path.join(this.conf.state_dir, 'web.json'), JSON.stringify({ enabled }));
+        writeDurable(path.join(this.conf.state_dir, 'web.json'), JSON.stringify({ enabled }));
         Promise.resolve(this.applyWeb()).then(() => this.syncWebUrl());
         this.syncWebUrl();
         this.changed();
@@ -4954,7 +5072,15 @@ class Updater {
             items = readJson(file);
         } catch (e) { /* none */ }
         rmIfThere(file);
-        (Array.isArray(items) ? items : []).filter((q) => q && ID.test(String(q.id)) && ['install', 'uninstall', 'rollback', 'adopt', 'restore', 'relay', 'setup'].indexOf(q.op) >= 0)
+        const validId = (s) => {
+            if (ID.test(s)) {
+                return true;
+            }
+            const at = s.indexOf('@');
+            return at > 0 && ID.test(s.slice(0, at)) && (ID.test(s.slice(at + 1)) || /^usb:[^\0\r\n]+$/.test(s.slice(at + 1)));
+        };
+        (Array.isArray(items) ? items : []).filter((q) => q && typeof q.id === 'string' && validId(q.id) &&
+            ['install', 'uninstall', 'rollback', 'adopt', 'restore', 'relay', 'setup'].indexOf(q.op) >= 0)
             .forEach((q) => this.enqueue(q));
     }
 
@@ -5241,9 +5367,17 @@ class Updater {
                 } catch (e) {
                     return;
                 }
-                if (!this.busy && target !== fs.realpathSync(HERE)) {
+                const here = fs.realpathSync(HERE);
+                if (!this.busy && target !== here) {
+                    let prev = here;
+                    try {
+                        const rel = path.relative(fs.realpathSync(path.join(this.conf.tool_root, SELF)), here);
+                        if (/^versions\/[^/]+$/.test(rel)) {
+                            prev = rel;
+                        }
+                    } catch (e) { /* outside tool_root */ }
                     writeAtomic(path.join(this.conf.tool_root, SELF, 'trial-local'), '');
-                    writeAtomic(trial, `${fs.realpathSync(HERE)}\n`);
+                    writeAtomic(trial, `${prev}\n`);
                     this.handover();
                 }
             }, 15000);
@@ -5355,6 +5489,6 @@ if (require.main === module) {
     cli(process.argv.slice(2));
 }
 
-module.exports = { Updater, repoId, Fetcher, loadConf, installedApp, installedTool, fileLog,
+module.exports = { Updater, repoId, Fetcher, loadConf, installedApp, installedTool, fileLog, mainappProcess,
     // tests: a stand-in phone page
     _setWeb: (w) => { web = w; } };
